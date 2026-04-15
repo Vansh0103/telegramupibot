@@ -112,7 +112,7 @@ def redeem_select_cb(call):
     if not user:
         safe_answer(call, "User not found", True)
         return
-    if amount < get_redeem_min_withdraw() or int(amount) % 5 != 0:
+    gst_cut = max(get_redeem_gst_cut(), float(code_row["gst_cut"] or 0))
         safe_answer(call, "This code is not valid for withdrawal rules.", True)
         return
     if user["balance"] < total_debit:
@@ -166,7 +166,7 @@ def redeem_confirm_cb(call):
         safe_send(call.message.chat.id, reason)
         return
 
-    if amount < get_redeem_min_withdraw() or int(amount) % 5 != 0:
+ gst_cut = max(get_redeem_gst_cut(), float(code_row["gst_cut"] or 0))
         safe_answer(call, "Code amount invalid", True)
         return
 
