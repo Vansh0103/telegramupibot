@@ -1003,7 +1003,7 @@ def admin_redeem_manager(message):
         f"{pe('chart')} Total Codes: {total['c'] if total else 0}\n"
         f"{pe('green')} Active Stock: {active['c'] if active else 0}\n"
         f"{pe('check')} Used Codes: {used['c'] if used else 0}\n"
-        f"{pe('info')} Min Redeem: ₹{get_redeem_min_withdraw():.0f} | GST: ₹{get_redeem_gst_cut():.0f}",
+        f"{pe('info')} Min Redeem: ₹{get_redeem_min_withdraw():.0f} | Multiple: ₹{get_redeem_multiple_of():.0f} | GST: ₹{get_redeem_gst_cut():.0f}",
         reply_markup=markup
     )
 
@@ -1060,7 +1060,7 @@ def rm_settings(call):
     toggle = bool(get_setting("redeem_withdraw_enabled"))
     markup.add(types.InlineKeyboardButton(f"{'🟢' if toggle else '🔴'} Toggle Redeem Withdraw", callback_data="rm_toggle"))
     markup.add(types.InlineKeyboardButton("Edit Code", callback_data="rm_edit"))
-    safe_send(call.message.chat.id, f"{pe('gear')} Min: ₹{get_redeem_min_withdraw():.0f}\nGST: ₹{get_redeem_gst_cut():.0f}\nEnabled: {'Yes' if toggle else 'No'}", reply_markup=markup)
+    safe_send(call.message.chat.id, f"{pe('gear')} Min: ₹{get_redeem_min_withdraw():.0f}\nMultiple: ₹{get_redeem_multiple_of():.0f}\nGST: ₹{get_redeem_gst_cut():.0f}\nEnabled: {'Yes' if toggle else 'No'}", reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data == "rm_set_min")
 def rm_set_min(call):
