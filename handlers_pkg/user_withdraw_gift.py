@@ -106,7 +106,7 @@ def redeem_select_cb(call):
         return
 
     amount = float(code_row["amount"] or 0)
-    gst_cut = max(get_redeem_gst_cut(), float(code_row["gst_cut"] or 0))
+if amount < get_redeem_min_withdraw() or int(amount) % 5 != 0:
     total_debit = amount + gst_cut
     user = get_user(user_id)
     if not user:
