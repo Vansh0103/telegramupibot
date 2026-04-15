@@ -1,1 +1,1 @@
-web: sh -c "python web_verify.py & python bot.py"
+web: sh -c "python web_verify.py & python main.py"
