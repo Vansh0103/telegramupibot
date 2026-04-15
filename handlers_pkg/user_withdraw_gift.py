@@ -87,7 +87,7 @@ def show_withdraw(chat_id, user_id):
         f"{pe('calendar')} <b>Daily Limit:</b> {limit_result['used_today']}/{limit_result['daily_limit']} used today\n\n"
         f"🏦 <b>UPI:</b> minimum ₹{min_upi:.0f}\n"
         f"🎟 <b>Redeem Code:</b> minimum ₹{redeem_min:.0f}, multiples of ₹5, +₹{redeem_gst:.0f} GST/fee\n\n"
-        f"{pe('info')} Redeem code stock is fully controlled by admin.",
+        f"{pe('info')} Redeem code Will Be Provided Instantly After Withdrawl",
         reply_markup=markup
     )
 
