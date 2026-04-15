@@ -446,8 +446,8 @@ def universal_handler(message):
         except Exception:
             safe_send(message.chat.id, f"{pe('cross')} Format: <code>PLATFORM | AMOUNT | CODE | NOTE(optional)</code>")
             return
-        if amount < get_redeem_min_withdraw() or int(amount) % 5 != 0:
-            safe_send(message.chat.id, f"{pe('cross')} Amount must be at least ₹{get_redeem_min_withdraw():.0f} and in multiples of ₹5.")
+        if amount < get_redeem_min_withdraw() or int(amount) % get_redeem_multiple_of() != 0:
+            safe_send(message.chat.id, f"{pe('cross')} Amount must be at least ₹{get_redeem_min_withdraw():.0f} and in multiples of ₹{get_redeem_multiple_of():.0f}.")
             return
         clear_state(user_id)
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -488,8 +488,8 @@ def universal_handler(message):
             except Exception:
                 safe_send(message.chat.id, f"{pe('cross')} {field} must be numeric")
                 return
-        if field == "amount" and (value < get_redeem_min_withdraw() or int(value) % 5 != 0):
-            safe_send(message.chat.id, f"{pe('cross')} Amount must be at least ₹{get_redeem_min_withdraw():.0f} and in multiples of ₹5.")
+        if field == "amount" and (value < get_redeem_min_withdraw() or int(value) % get_redeem_multiple_of() != 0):
+            safe_send(message.chat.id, f"{pe('cross')} Amount must be at least ₹{get_redeem_min_withdraw():.0f} and in multiples of ₹{get_redeem_multiple_of():.0f}.")
             return
         if field == "is_active":
             value = 1 if str(value).strip().lower() in ["1", "true", "yes", "active"] else 0
