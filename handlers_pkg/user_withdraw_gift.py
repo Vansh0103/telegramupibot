@@ -1,5 +1,27 @@
 from core import *
 
+# ======================== REDEEM CODE SETTINGS (EDIT HERE) ========================
+# Sirf redeem code withdrawal ke liye ye 3 values change karo.
+REDEEM_CODE_MIN_WITHDRAW = 15
+REDEEM_CODE_MULTIPLE_OF = 5
+REDEEM_CODE_GST_FEE = 5
+
+def get_redeem_min_withdraw():
+    return float(REDEEM_CODE_MIN_WITHDRAW)
+
+def get_redeem_gst_cut():
+    return float(REDEEM_CODE_GST_FEE)
+
+def is_valid_redeem_amount(amount):
+    try:
+        amount = int(float(amount))
+        multiple = int(REDEEM_CODE_MULTIPLE_OF)
+        if multiple <= 0:
+            return True
+        return amount % multiple == 0
+    except:
+        return False
+
 # ======================== WITHDRAW ========================
 def is_withdraw_time():
     now = datetime.now()
@@ -86,7 +108,7 @@ def show_withdraw(chat_id, user_id):
         f"{pe('money')} <b>Balance:</b> ₹{user['balance']:.2f}\n"
         f"{pe('calendar')} <b>Daily Limit:</b> {limit_result['used_today']}/{limit_result['daily_limit']} used today\n\n"
         f"🏦 <b>UPI:</b> minimum ₹{min_upi:.0f}\n"
-        f"🎟 <b>Redeem Code:</b> minimum ₹{redeem_min:.0f}, multiples of ₹5, +₹{redeem_gst:.0f} GST/fee\n\n"
+        f"🎟 <b>Redeem Code:</b> minimum ₹{redeem_min:.0f}, multiples of ₹{int(REDEEM_CODE_MULTIPLE_OF)}, +₹{redeem_gst:.0f} GST/fee\n\n"
         f"{pe('info')} Redeem code Will Be Provided Instantly After Withdrawl",
         reply_markup=markup
     )
@@ -106,13 +128,13 @@ def redeem_select_cb(call):
         return
 
     amount = float(code_row["amount"] or 0)
-if amount < get_redeem_min_withdraw() or int(amount) % 5 != 0:
+    gst_cut = max(get_redeem_gst_cut(), float(code_row["gst_cut"] or 0))
     total_debit = amount + gst_cut
     user = get_user(user_id)
     if not user:
         safe_answer(call, "User not found", True)
         return
-    gst_cut = max(get_redeem_gst_cut(), float(code_row["gst_cut"] or 0))
+    if amount < get_redeem_min_withdraw() or not is_valid_redeem_amount(amount):
         safe_answer(call, "This code is not valid for withdrawal rules.", True)
         return
     if user["balance"] < total_debit:
@@ -166,7 +188,7 @@ def redeem_confirm_cb(call):
         safe_send(call.message.chat.id, reason)
         return
 
- gst_cut = max(get_redeem_gst_cut(), float(code_row["gst_cut"] or 0))
+    if amount < get_redeem_min_withdraw() or not is_valid_redeem_amount(amount):
         safe_answer(call, "Code amount invalid", True)
         return
 
