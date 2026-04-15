@@ -1,6 +1,5 @@
 from core import *
 
-from core import *
 
 @bot.message_handler(commands=['getdb'])
 def send_db(message):
@@ -8,6 +7,14 @@ def send_db(message):
         with open(DB_PATH, "rb") as f:
             bot.send_document(message.chat.id, f)
         log_admin_action(message.from_user.id, "getdb", "Downloaded database")
+@bot.message_handler(func=lambda m: m.text == "🔙 User Panel" and is_admin(m.from_user.id))
+def back_user_panel(message):
+    safe_send(
+        message.chat.id,
+        f"{pe('check')} Switched to User Panel.",
+        reply_markup=get_main_keyboard(message.from_user.id)
+    )
+
 @bot.message_handler(commands=["start"])
 def start_handler(message):
     user_id = message.from_user.id
