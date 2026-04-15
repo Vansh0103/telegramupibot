@@ -2,9 +2,9 @@ from core import *
 
 # ======================== REDEEM CODE SETTINGS (EDIT HERE) ========================
 # Sirf redeem code withdrawal ke liye ye 3 values change karo.
-REDEEM_CODE_MIN_WITHDRAW = 15
+REDEEM_CODE_MIN_WITHDRAW = 10
 REDEEM_CODE_MULTIPLE_OF = 5
-REDEEM_CODE_GST_FEE = 5
+REDEEM_CODE_GST_FEE = 3
 
 def get_redeem_min_withdraw():
     return float(REDEEM_CODE_MIN_WITHDRAW)
