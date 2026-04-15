@@ -45,6 +45,9 @@ DEFAULT_SETTINGS = {
     "max_gift_create": 100,
     "min_gift_amount": 3,
     "tasks_enabled": True,
+    "redeem_withdraw_enabled": True,
+    "redeem_min_withdraw": 15,
+    "redeem_gst_cut": 5,
 }
 
 PE = {
@@ -235,6 +238,19 @@ def init_db():
             details TEXT DEFAULT '',
             created_at TEXT DEFAULT ''
         );
+        CREATE TABLE IF NOT EXISTS redeem_codes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            platform TEXT DEFAULT '',
+            code TEXT UNIQUE,
+            amount REAL DEFAULT 0,
+            gst_cut REAL DEFAULT 5,
+            is_active INTEGER DEFAULT 1,
+            created_by INTEGER DEFAULT 0,
+            created_at TEXT DEFAULT '',
+            assigned_to INTEGER DEFAULT 0,
+            assigned_at TEXT DEFAULT '',
+            note TEXT DEFAULT ''
+        );
     """)
 
     try:
@@ -249,6 +265,35 @@ def init_db():
 
     try:
         c.execute("ALTER TABLE users ADD COLUMN ip_verified INTEGER DEFAULT 0")
+    except:
+        pass
+    try:
+        c.execute("ALTER TABLE withdrawals ADD COLUMN method TEXT DEFAULT 'upi'")
+    except:
+        pass
+
+    try:
+        c.execute("ALTER TABLE withdrawals ADD COLUMN redeem_code_id INTEGER DEFAULT 0")
+    except:
+        pass
+
+    try:
+        c.execute("ALTER TABLE withdrawals ADD COLUMN redeem_product TEXT DEFAULT ''")
+    except:
+        pass
+
+    try:
+        c.execute("ALTER TABLE withdrawals ADD COLUMN gst_amount REAL DEFAULT 0")
+    except:
+        pass
+
+    try:
+        c.execute("ALTER TABLE withdrawals ADD COLUMN net_amount REAL DEFAULT 0")
+    except:
+        pass
+
+    try:
+        c.execute("ALTER TABLE withdrawals ADD COLUMN payout_code TEXT DEFAULT ''")
     except:
         pass
 
@@ -347,6 +392,179 @@ def get_total_pending():
 def get_total_referrals():
     row = db_execute("SELECT SUM(referral_count) as total FROM users", fetchone=True)
     return (row["total"] or 0) if row else 0
+
+def get_redeem_min_withdraw():
+    try:
+        value = float(get_setting("redeem_min_withdraw") or 15)
+    except Exception:
+        value = 15
+    return max(15, value)
+
+def get_redeem_gst_cut():
+    try:
+        value = float(get_setting("redeem_gst_cut") or 5)
+    except Exception:
+        value = 5
+    return max(5, value)
+
+def get_active_redeem_codes(limit=None):
+    query = (
+        "SELECT * FROM redeem_codes WHERE is_active=1 AND assigned_to=0 "
+        "ORDER BY amount ASC, platform ASC, id ASC"
+    )
+    if limit:
+        query += f" LIMIT {int(limit)}"
+    return db_execute(query, fetch=True) or []
+
+def get_redeem_code_by_id(code_id):
+    return db_execute("SELECT * FROM redeem_codes WHERE id=?", (code_id,), fetchone=True)
+
+def get_redeem_inventory_summary():
+    return db_execute(
+        "SELECT platform, amount, COUNT(*) as cnt FROM redeem_codes "
+        "WHERE is_active=1 AND assigned_to=0 GROUP BY platform, amount "
+        "ORDER BY amount ASC, platform ASC",
+        fetch=True
+    ) or []
+
+def assign_redeem_code_atomic(code_id, user_id):
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with DB_LOCK:
+        conn = get_db()
+        try:
+            c = conn.cursor()
+            c.execute(
+                "SELECT * FROM redeem_codes WHERE id=? AND is_active=1 AND assigned_to=0",
+                (code_id,)
+            )
+            row = c.fetchone()
+            if not row:
+                conn.rollback()
+                return None
+            c.execute(
+                "UPDATE redeem_codes SET is_active=0, assigned_to=?, assigned_at=? WHERE id=? AND is_active=1 AND assigned_to=0",
+                (user_id, now, code_id)
+            )
+            if c.rowcount != 1:
+                conn.rollback()
+                return None
+            conn.commit()
+            return dict(row)
+        except Exception as e:
+            conn.rollback()
+            print(f"Redeem assign error: {e}")
+            return None
+        finally:
+            conn.close()
+
+def show_upi_withdraw(chat_id, user_id):
+    user = get_user(user_id)
+    if not user:
+        safe_send(chat_id, "Please send /start first.")
+        return
+
+    limit_result = withdraw_limit.check_and_send_limit_message(chat_id, user_id)
+    if not limit_result["allowed"]:
+        return
+
+    today_withdraws = limit_result["used_today"]
+    daily_limit = limit_result["daily_limit"]
+    min_withdraw = get_setting("min_withdraw")
+
+    if user["balance"] < min_withdraw:
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("👥 Refer & Earn More", callback_data="open_refer"))
+        safe_send(
+            chat_id,
+            f"{pe('warning')} <b>Insufficient Balance!</b>\n\n"
+            f"{pe('fly_money')} Balance: ₹{user['balance']:.2f}\n"
+            f"{pe('down_arrow')} Minimum: ₹{min_withdraw}\n"
+            f"{pe('calendar')} <b>Daily Limit:</b> {daily_limit} withdrawals per day\n"
+            f"{pe('calendar')} <b>Today's Withdrawals:</b> {today_withdraws}/{daily_limit}\n"
+            f"{pe('excl')} Need ₹{max(0, min_withdraw - user['balance']):.2f} more\n\n"
+            f"{pe('arrow')} Refer friends to earn more!",
+            reply_markup=markup
+        )
+        return
+
+    if user["upi_id"]:
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        markup.add(
+            types.InlineKeyboardButton(f"✅ Use: {user['upi_id']}", callback_data="use_saved_upi"),
+            types.InlineKeyboardButton("✏️ Use Different UPI ID", callback_data="enter_new_upi"),
+            types.InlineKeyboardButton("🔙 Back", callback_data="open_withdraw")
+        )
+        withdraw_image = get_setting("withdraw_image")
+        caption = (
+            f"{pe('fly_money')} <b>UPI Withdraw Funds</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"{pe('money')} <b>Balance:</b> ₹{user['balance']:.2f}\n"
+            f"{pe('calendar')} <b>Daily Limit:</b> {daily_limit} withdrawals per day\n"
+            f"{pe('calendar')} <b>Today's Withdrawals:</b> {today_withdraws}/{daily_limit}\n"
+            f"{pe('down_arrow')} <b>Min:</b> ₹{min_withdraw}\n"
+            f"{pe('link')} <b>Saved UPI:</b> {user['upi_id']}\n\n"
+            f"{pe('question2')} Choose an option:\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━"
+        )
+        try:
+            bot.send_photo(chat_id, withdraw_image, caption=caption, parse_mode="HTML", reply_markup=markup)
+        except:
+            safe_send(chat_id, caption, reply_markup=markup)
+    else:
+        set_state(user_id, "enter_upi")
+        safe_send(
+            chat_id,
+            f"{pe('pencil')} <b>Enter Your UPI ID</b>\n\n"
+            f"{pe('calendar')} <b>Daily Limit:</b> {daily_limit} withdrawals per day\n"
+            f"{pe('calendar')} <b>Today's Withdrawals:</b> {today_withdraws}/{daily_limit}\n\n"
+            f"{pe('info')} Valid formats:\n"
+            f"  <code>name@paytm</code>\n"
+            f"  <code>9876543210@okaxis</code>\n"
+            f"  <code>name@ybl</code>\n\n"
+            f"{pe('warning')} Double-check your UPI ID!"
+        )
+
+
+def show_redeem_withdraw(chat_id, user_id):
+    user = get_user(user_id)
+    if not user:
+        safe_send(chat_id, "Please send /start first.")
+        return
+
+    if not get_setting("redeem_withdraw_enabled"):
+        safe_send(chat_id, f"{pe('no_entry')} <b>Redeem code withdrawals are disabled right now.</b>")
+        return
+
+    redeem_min = get_redeem_min_withdraw()
+    gst_cut = get_redeem_gst_cut()
+    summary = get_redeem_inventory_summary()
+    if not summary:
+        safe_send(chat_id, f"{pe('warning')} <b>No redeem codes are available right now.</b>")
+        return
+
+    available_lines = []
+    active_codes = get_active_redeem_codes(limit=20)
+    for row in summary[:20]:
+        available_lines.append(f"• {row['platform']} — ₹{row['amount']:.0f} ({row['cnt']} available)")
+
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    for row in active_codes[:20]:
+        label = f"{row['platform'][:14]} ₹{row['amount']:.0f}"
+        markup.add(types.InlineKeyboardButton(label, callback_data=f"rwsel|{row['id']}"))
+    markup.add(types.InlineKeyboardButton("🔙 Back", callback_data="open_withdraw"))
+
+    safe_send(
+        chat_id,
+        f"{pe('tag')} <b>Redeem Code Withdraw</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"{pe('money')} <b>Your Balance:</b> ₹{user['balance']:.2f}\n"
+        f"{pe('down_arrow')} <b>Minimum Code Value:</b> ₹{redeem_min:.0f}\n"
+        f"{pe('info')} <b>GST / Fee:</b> ₹{gst_cut:.0f} extra per redemption\n"
+        f"{pe('arrow')} <b>Allowed amounts:</b> multiples of ₹5 only\n\n"
+        f"{pe('list')} <b>Available Codes:</b>\n" + "\n".join(available_lines) + "\n\n"
+        f"{pe('warning')} You will be charged <b>Code Amount + ₹{gst_cut:.0f}</b> from your balance.",
+        reply_markup=markup
+    )
 
 def create_user(user_id, username, first_name, referred_by=0):
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -626,6 +844,9 @@ def get_admin_keyboard():
     markup.add(
         types.KeyboardButton("📢 Broadcast"),
         types.KeyboardButton("🎁 Gift Manager"),
+    )
+    markup.add(
+        types.KeyboardButton("🎟 Redeem Codes"),
     )
     markup.add(
         types.KeyboardButton("📋 Task Manager"),
@@ -1093,6 +1314,16 @@ def open_withdraw_cb(call):
     safe_answer(call)
     show_withdraw(call.message.chat.id, call.from_user.id)
 
+@bot.callback_query_handler(func=lambda call: call.data == "open_upi_withdraw")
+def open_upi_withdraw_cb(call):
+    safe_answer(call)
+    show_upi_withdraw(call.message.chat.id, call.from_user.id)
+
+@bot.callback_query_handler(func=lambda call: call.data == "open_redeem_withdraw")
+def open_redeem_withdraw_cb(call):
+    safe_answer(call)
+    show_redeem_withdraw(call.message.chat.id, call.from_user.id)
+
 def show_withdraw(chat_id, user_id):
     user = get_user(user_id)
     if not user:
@@ -1122,61 +1353,168 @@ def show_withdraw(chat_id, user_id):
     if not limit_result["allowed"]:
         return
 
-    today_withdraws = limit_result["used_today"]
-    daily_limit = limit_result["daily_limit"]
+    min_upi = float(get_setting("min_withdraw") or 5)
+    redeem_min = get_redeem_min_withdraw()
+    redeem_gst = get_redeem_gst_cut()
+    available_redeem = db_execute(
+        "SELECT COUNT(*) as cnt FROM redeem_codes WHERE is_active=1 AND assigned_to=0",
+        fetchone=True
+    )
 
-    min_withdraw = get_setting("min_withdraw")
-    if user["balance"] < min_withdraw:
-        markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("👥 Refer & Earn More", callback_data="open_refer"))
-        safe_send(
-            chat_id,
-            f"{pe('warning')} <b>Insufficient Balance!</b>\n\n"
-            f"{pe('fly_money')} Balance: ₹{user['balance']:.2f}\n"
-            f"{pe('down_arrow')} Minimum: ₹{min_withdraw}\n"
-            f"{pe('calendar')} <b>Daily Limit:</b> {daily_limit} withdrawals per day\n"
-            f"{pe('calendar')} <b>Today's Withdrawals:</b> {today_withdraws}/{daily_limit}\n"
-            f"{pe('excl')} Need ₹{max(0, min_withdraw - user['balance']):.2f} more\n\n"
-            f"{pe('arrow')} Refer friends to earn more!",
-            reply_markup=markup
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    markup.add(types.InlineKeyboardButton("🏦 UPI Withdrawal", callback_data="open_upi_withdraw"))
+    markup.add(
+        types.InlineKeyboardButton(
+            f"🎟 Redeem Code Withdrawal ({available_redeem['cnt'] if available_redeem else 0})",
+            callback_data="open_redeem_withdraw"
         )
+    )
+
+    safe_send(
+        chat_id,
+        f"{pe('fly_money')} <b>Choose Withdrawal Method</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"{pe('money')} <b>Balance:</b> ₹{user['balance']:.2f}\n"
+        f"{pe('calendar')} <b>Daily Limit:</b> {limit_result['used_today']}/{limit_result['daily_limit']} used today\n\n"
+        f"🏦 <b>UPI:</b> minimum ₹{min_upi:.0f}\n"
+        f"🎟 <b>Redeem Code:</b> minimum ₹{redeem_min:.0f}, multiples of ₹5, +₹{redeem_gst:.0f} GST/fee\n\n"
+        f"{pe('info')} Redeem code stock is fully controlled by admin.",
+        reply_markup=markup
+    )
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("rwsel|"))
+def redeem_select_cb(call):
+    user_id = call.from_user.id
+    try:
+        code_id = int(call.data.split("|")[1])
+    except Exception:
+        safe_answer(call, "Invalid selection", True)
         return
 
-    if user["upi_id"]:
-        markup = types.InlineKeyboardMarkup(row_width=1)
-        markup.add(
-            types.InlineKeyboardButton(f"✅ Use: {user['upi_id']}", callback_data="use_saved_upi"),
-            types.InlineKeyboardButton("✏️ Use Different UPI ID", callback_data="enter_new_upi")
-        )
-        withdraw_image = get_setting("withdraw_image")
-        caption = (
-            f"{pe('fly_money')} <b>Withdraw Funds</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"{pe('money')} <b>Balance:</b> ₹{user['balance']:.2f}\n"
-            f"{pe('calendar')} <b>Daily Limit:</b> {daily_limit} withdrawals per day\n"
-            f"{pe('calendar')} <b>Today's Withdrawals:</b> {today_withdraws}/{daily_limit}\n"
-            f"{pe('down_arrow')} <b>Min:</b> ₹{min_withdraw}\n"
-            f"{pe('link')} <b>Saved UPI:</b> {user['upi_id']}\n\n"
-            f"{pe('question2')} Choose an option:\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━"
-        )
-        try:
-            bot.send_photo(chat_id, withdraw_image, caption=caption, parse_mode="HTML", reply_markup=markup)
-        except:
-            safe_send(chat_id, caption, reply_markup=markup)
-    else:
-        set_state(user_id, "enter_upi")
+    code_row = get_redeem_code_by_id(code_id)
+    if not code_row or int(code_row["is_active"] or 0) != 1 or int(code_row["assigned_to"] or 0) != 0:
+        safe_answer(call, "This code is no longer available.", True)
+        return
+
+    amount = float(code_row["amount"] or 0)
+    gst_cut = max(get_redeem_gst_cut(), float(code_row["gst_cut"] or 0))
+    total_debit = amount + gst_cut
+    user = get_user(user_id)
+    if not user:
+        safe_answer(call, "User not found", True)
+        return
+    if amount < get_redeem_min_withdraw() or int(amount) % 5 != 0:
+        safe_answer(call, "This code is not valid for withdrawal rules.", True)
+        return
+    if user["balance"] < total_debit:
+        safe_answer(call, f"Need ₹{total_debit:.0f} balance for this redemption.", True)
+        return
+
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        types.InlineKeyboardButton("✅ Confirm", callback_data=f"rwcnf|{code_id}"),
+        types.InlineKeyboardButton("❌ Cancel", callback_data="open_redeem_withdraw")
+    )
+    safe_send(
+        call.message.chat.id,
+        f"{pe('warning')} <b>Confirm Redeem Code Withdrawal</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"{pe('tag')} <b>Brand:</b> {code_row['platform']}\n"
+        f"{pe('money')} <b>Code Value:</b> ₹{amount:.0f}\n"
+        f"{pe('info')} <b>GST/Fee:</b> ₹{gst_cut:.0f}\n"
+        f"{pe('fly_money')} <b>Total Deduction:</b> ₹{total_debit:.0f}\n\n"
+        f"{pe('warning')} After confirmation, the code will be assigned instantly and cannot be reused.",
+        reply_markup=markup
+    )
+    safe_answer(call)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("rwcnf|"))
+def redeem_confirm_cb(call):
+    user_id = call.from_user.id
+    try:
+        code_id = int(call.data.split("|")[1])
+    except Exception:
+        safe_answer(call, "Invalid request", True)
+        return
+
+    code_row = get_redeem_code_by_id(code_id)
+    if not code_row:
+        safe_answer(call, "Code not found", True)
+        return
+
+    amount = float(code_row["amount"] or 0)
+    gst_cut = max(get_redeem_gst_cut(), float(code_row["gst_cut"] or 0))
+    total_debit = amount + gst_cut
+
+    user = get_user(user_id)
+    if not user:
+        safe_answer(call, "User not found", True)
+        return
+
+    allowed, reason = withdraw_limit.can_user_withdraw(user_id)
+    if not allowed:
+        safe_answer(call, "Daily limit reached", True)
+        safe_send(call.message.chat.id, reason)
+        return
+
+    if amount < get_redeem_min_withdraw() or int(amount) % 5 != 0:
+        safe_answer(call, "Code amount invalid", True)
+        return
+
+    if user["balance"] < total_debit:
+        safe_answer(call, f"Need ₹{total_debit:.0f} balance.", True)
+        return
+
+    assigned = assign_redeem_code_atomic(code_id, user_id)
+    if not assigned:
+        safe_answer(call, "This code was just taken. Please choose another one.", True)
+        return
+
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    txn = generate_txn_id()
+    update_user(
+        user_id,
+        balance=user["balance"] - total_debit,
+        total_withdrawn=user["total_withdrawn"] + amount
+    )
+    w_id = db_lastrowid(
+        "INSERT INTO withdrawals (user_id, amount, upi_id, status, created_at, processed_at, txn_id, method, redeem_code_id, redeem_product, gst_amount, net_amount, payout_code) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (user_id, amount, assigned["platform"], "approved", now, now, txn, "redeem_code", code_id, assigned["platform"], gst_cut, total_debit, assigned["code"])
+    )
+    log_admin_action(user_id, "redeem_withdraw", f"Redeemed code #{code_id} {assigned['platform']} ₹{amount:.0f}")
+    safe_answer(call, "Redeem code sent!")
+    safe_edit(
+        call.message.chat.id, call.message.message_id,
+        f"{pe('check')} <b>Redeem Code Withdrawal Successful!</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"{pe('tag')} <b>Brand:</b> {assigned['platform']}\n"
+        f"{pe('money')} <b>Code Value:</b> ₹{amount:.0f}\n"
+        f"{pe('info')} <b>GST/Fee Deducted:</b> ₹{gst_cut:.0f}\n"
+        f"{pe('fly_money')} <b>Total Balance Deducted:</b> ₹{total_debit:.0f}\n"
+        f"{pe('key')} <b>Your Code:</b> <code>{assigned['code']}</code>\n"
+        f"{pe('bookmark')} <b>TXN:</b> <code>{txn}</code>\n\n"
+        f"{pe('warning')} Keep this code private. It has been removed from available stock automatically.\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━"
+    )
+
+    try:
         safe_send(
-            chat_id,
-            f"{pe('pencil')} <b>Enter Your UPI ID</b>\n\n"
-            f"{pe('calendar')} <b>Daily Limit:</b> {daily_limit} withdrawals per day\n"
-            f"{pe('calendar')} <b>Today's Withdrawals:</b> {today_withdraws}/{daily_limit}\n\n"
-            f"{pe('info')} Valid formats:\n"
-            f"  <code>name@paytm</code>\n"
-            f"  <code>9876543210@okaxis</code>\n"
-            f"  <code>name@ybl</code>\n\n"
-            f"{pe('warning')} Double-check your UPI ID!"
+            ADMIN_ID,
+            f"{pe('siren')} <b>Redeem Code Withdrawal Used</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"User: {user['first_name']} (<code>{user_id}</code>)\n"
+            f"Brand: {assigned['platform']}\n"
+            f"Value: ₹{amount:.0f}\n"
+            f"GST: ₹{gst_cut:.0f}\n"
+            f"Total Deducted: ₹{total_debit:.0f}\n"
+            f"Code ID: #{code_id}\n"
+            f"Withdrawal ID: #{w_id}\n"
+            f"TXN: <code>{txn}</code>"
         )
+    except Exception as e:
+        print(f"Admin redeem notify error: {e}")
+
 @bot.callback_query_handler(func=lambda call: call.data == "use_saved_upi")
 def use_saved_upi(call):
     user_id = call.from_user.id
@@ -1748,6 +2086,9 @@ def universal_handler(message):
         if text == "🎁 Gift Manager" and is_admin(user_id):
             admin_gift_manager(message)
             return
+        if text == "🎟 Redeem Codes" and is_admin(user_id):
+            admin_redeem_manager(message)
+            return
         if text == "📋 Task Manager" and is_admin(user_id):
             admin_task_manager(message)
             return
@@ -2088,6 +2429,140 @@ def universal_handler(message):
             f"{pe('money')} Amount: ₹{amt}\n"
             f"{pe('thumbs_up')} Max Claims: {mc}"
         )
+        return
+
+    if state == "admin_add_redeem_code":
+        try:
+            parts = [p.strip() for p in text.split("|")]
+            platform = parts[0]
+            amount = float(parts[1])
+            code = parts[2]
+            note = parts[3] if len(parts) > 3 else ""
+        except Exception:
+            safe_send(message.chat.id, f"{pe('cross')} Format: <code>PLATFORM | AMOUNT | CODE | NOTE(optional)</code>")
+            return
+        if amount < get_redeem_min_withdraw() or int(amount) % 5 != 0:
+            safe_send(message.chat.id, f"{pe('cross')} Amount must be at least ₹{get_redeem_min_withdraw():.0f} and in multiples of ₹5.")
+            return
+        clear_state(user_id)
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        db_execute(
+            "INSERT INTO redeem_codes (platform, code, amount, gst_cut, is_active, created_by, created_at, note) VALUES (?,?,?,?,?,?,?,?)",
+            (platform, code, amount, get_redeem_gst_cut(), 1, user_id, now, note)
+        )
+        log_admin_action(user_id, "add_redeem_code", f"{platform} ₹{amount} code added")
+        safe_send(
+            message.chat.id,
+            f"{pe('check')} Redeem code added!\n"
+            f"Brand: <b>{platform}</b>\n"
+            f"Amount: ₹{amount:.0f}\n"
+            f"Code: <code>{code}</code>"
+        )
+        return
+
+    if state == "admin_edit_redeem_code":
+        try:
+            parts = [p.strip() for p in text.split("|", 2)]
+            code_id = int(parts[0])
+            field = parts[1].lower()
+            value = parts[2]
+        except Exception:
+            safe_send(message.chat.id, f"{pe('cross')} Format: <code>ID | FIELD | VALUE</code>")
+            return
+        allowed = {"platform", "amount", "code", "note", "is_active", "gst_cut"}
+        if field not in allowed:
+            safe_send(message.chat.id, f"{pe('cross')} Allowed fields: {', '.join(sorted(allowed))}")
+            return
+        row = get_redeem_code_by_id(code_id)
+        if not row:
+            safe_send(message.chat.id, f"{pe('cross')} Redeem code ID not found!")
+            return
+        if field in {"amount", "gst_cut"}:
+            try:
+                value = float(value)
+            except Exception:
+                safe_send(message.chat.id, f"{pe('cross')} {field} must be numeric")
+                return
+        if field == "amount" and (value < get_redeem_min_withdraw() or int(value) % 5 != 0):
+            safe_send(message.chat.id, f"{pe('cross')} Amount must be at least ₹{get_redeem_min_withdraw():.0f} and in multiples of ₹5.")
+            return
+        if field == "is_active":
+            value = 1 if str(value).strip().lower() in ["1", "true", "yes", "active"] else 0
+        clear_state(user_id)
+        db_execute(f"UPDATE redeem_codes SET {field}=? WHERE id=?", (value, code_id))
+        log_admin_action(user_id, "edit_redeem_code", f"ID {code_id} {field}={value}")
+        safe_send(message.chat.id, f"{pe('check')} Redeem code #{code_id} updated: <b>{field}</b> = <code>{value}</code>")
+        return
+
+    if state == "admin_check_redeem_code":
+        query = text.strip()
+        clear_state(user_id)
+        row = db_execute(
+            "SELECT * FROM redeem_codes WHERE id=? OR UPPER(code)=UPPER(?) ORDER BY id DESC LIMIT 1",
+            (int(query) if query.isdigit() else -1, query),
+            fetchone=True
+        )
+        if not row:
+            safe_send(message.chat.id, f"{pe('cross')} Redeem code not found!")
+            return
+        assigned_text = f"<code>{row['assigned_to']}</code> on {row['assigned_at']}" if row['assigned_to'] else "Not used"
+        status = "🟢 Active" if row['is_active'] and not row['assigned_to'] else "🔴 Used/Inactive"
+        safe_send(
+            message.chat.id,
+            f"{pe('tag')} <b>Redeem Code Details</b>\n\n"
+            f"ID: <code>{row['id']}</code>\n"
+            f"Brand: <b>{row['platform']}</b>\n"
+            f"Amount: ₹{row['amount']:.0f}\n"
+            f"GST: ₹{row['gst_cut']:.0f}\n"
+            f"Code: <code>{row['code']}</code>\n"
+            f"Status: {status}\n"
+            f"Used By: {assigned_text}\n"
+            f"Note: {row['note'] or '-'}"
+        )
+        return
+
+    if state == "admin_set_redeem_min":
+        try:
+            val = float(text)
+        except:
+            safe_send(message.chat.id, f"{pe('cross')} Enter valid number!")
+            return
+        if val < 15 or int(val) % 5 != 0:
+            safe_send(message.chat.id, f"{pe('cross')} Minimum must be ₹15 or more and in multiples of ₹5.")
+            return
+        clear_state(user_id)
+        set_setting("redeem_min_withdraw", val)
+        safe_send(message.chat.id, f"{pe('check')} Redeem minimum set to ₹{val:.0f}")
+        return
+
+    if state == "admin_set_redeem_gst":
+        try:
+            val = float(text)
+        except:
+            safe_send(message.chat.id, f"{pe('cross')} Enter valid number!")
+            return
+        if val < 5:
+            safe_send(message.chat.id, f"{pe('cross')} GST cut cannot be less than ₹5.")
+            return
+        clear_state(user_id)
+        set_setting("redeem_gst_cut", val)
+        safe_send(message.chat.id, f"{pe('check')} Redeem GST cut set to ₹{val:.0f}")
+        return
+
+    if state == "admin_delete_redeem_code":
+        try:
+            code_id = int(text.strip())
+        except Exception:
+            safe_send(message.chat.id, f"{pe('cross')} Enter a valid redeem code ID!")
+            return
+        row = get_redeem_code_by_id(code_id)
+        clear_state(user_id)
+        if not row:
+            safe_send(message.chat.id, f"{pe('cross')} Redeem code not found!")
+            return
+        db_execute("DELETE FROM redeem_codes WHERE id=?", (code_id,))
+        log_admin_action(user_id, "delete_redeem_code", f"Deleted redeem code #{code_id}")
+        safe_send(message.chat.id, f"{pe('check')} Redeem code #{code_id} deleted.")
         return
 
     if state == "admin_set_per_refer":
@@ -4021,6 +4496,126 @@ def gm_confirm_delete(call):
     safe_answer(call, "✅ All gift codes deleted!")
     safe_send(call.message.chat.id, f"{pe('check')} All gift codes deleted!")
 
+
+@bot.message_handler(func=lambda m: m.text == "🎟 Redeem Codes" and is_admin(m.from_user.id))
+def admin_redeem_manager(message):
+    total = db_execute("SELECT COUNT(*) as c FROM redeem_codes", fetchone=True)
+    active = db_execute("SELECT COUNT(*) as c FROM redeem_codes WHERE is_active=1 AND assigned_to=0", fetchone=True)
+    used = db_execute("SELECT COUNT(*) as c FROM redeem_codes WHERE assigned_to!=0", fetchone=True)
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        types.InlineKeyboardButton("➕ Add Code", callback_data="rm_add"),
+        types.InlineKeyboardButton("📦 Active Stock", callback_data="rm_active"),
+    )
+    markup.add(
+        types.InlineKeyboardButton("✅ Used Codes", callback_data="rm_used"),
+        types.InlineKeyboardButton("🔍 Check/Edit", callback_data="rm_check"),
+    )
+    markup.add(
+        types.InlineKeyboardButton("⚙️ Redeem Settings", callback_data="rm_settings"),
+        types.InlineKeyboardButton("🗑 Delete Code", callback_data="rm_delete_prompt"),
+    )
+    safe_send(
+        message.chat.id,
+        f"{pe('tag')} <b>Redeem Code Manager</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"{pe('chart')} Total Codes: {total['c'] if total else 0}\n"
+        f"{pe('green')} Active Stock: {active['c'] if active else 0}\n"
+        f"{pe('check')} Used Codes: {used['c'] if used else 0}\n"
+        f"{pe('info')} Min Redeem: ₹{get_redeem_min_withdraw():.0f} | GST: ₹{get_redeem_gst_cut():.0f}",
+        reply_markup=markup
+    )
+
+@bot.callback_query_handler(func=lambda call: call.data == "rm_add")
+def rm_add(call):
+    if not is_admin(call.from_user.id): return
+    safe_answer(call)
+    set_state(call.from_user.id, "admin_add_redeem_code")
+    safe_send(call.message.chat.id, f"{pe('pencil')} Send:\n<code>PLATFORM | AMOUNT | CODE | NOTE(optional)</code>\nExample:\n<code>Amazon | 20 | ABCD-EFGH-IJKL | Fast card</code>")
+
+@bot.callback_query_handler(func=lambda call: call.data == "rm_active")
+def rm_active(call):
+    if not is_admin(call.from_user.id): return
+    safe_answer(call)
+    rows = get_active_redeem_codes(limit=50)
+    if not rows:
+        safe_send(call.message.chat.id, f"{pe('info')} No active redeem codes in stock.")
+        return
+    text = f"{pe('list')} <b>Active Redeem Stock</b>\n━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    for r in rows[:40]:
+        text += f"#{r['id']} • {r['platform']} • ₹{r['amount']:.0f} • <code>{r['code']}</code>\n"
+    safe_send(call.message.chat.id, text[:4000])
+
+@bot.callback_query_handler(func=lambda call: call.data == "rm_used")
+def rm_used(call):
+    if not is_admin(call.from_user.id): return
+    safe_answer(call)
+    rows = db_execute(
+        "SELECT * FROM redeem_codes WHERE assigned_to!=0 ORDER BY assigned_at DESC LIMIT 40",
+        fetch=True
+    ) or []
+    if not rows:
+        safe_send(call.message.chat.id, f"{pe('info')} No used redeem codes yet.")
+        return
+    text = f"{pe('check')} <b>Used Redeem Codes</b>\n━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    for r in rows:
+        text += f"#{r['id']} • {r['platform']} • ₹{r['amount']:.0f} • user <code>{r['assigned_to']}</code> • {r['assigned_at'][:16]}\n"
+    safe_send(call.message.chat.id, text[:4000])
+
+@bot.callback_query_handler(func=lambda call: call.data == "rm_check")
+def rm_check(call):
+    if not is_admin(call.from_user.id): return
+    safe_answer(call)
+    set_state(call.from_user.id, "admin_check_redeem_code")
+    safe_send(call.message.chat.id, f"{pe('pencil')} Enter redeem code ID or exact code to inspect.")
+
+@bot.callback_query_handler(func=lambda call: call.data == "rm_settings")
+def rm_settings(call):
+    if not is_admin(call.from_user.id): return
+    safe_answer(call)
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    markup.add(types.InlineKeyboardButton("Set Min Redeem", callback_data="rm_set_min"))
+    markup.add(types.InlineKeyboardButton("Set GST Cut", callback_data="rm_set_gst"))
+    toggle = bool(get_setting("redeem_withdraw_enabled"))
+    markup.add(types.InlineKeyboardButton(f"{'🟢' if toggle else '🔴'} Toggle Redeem Withdraw", callback_data="rm_toggle"))
+    markup.add(types.InlineKeyboardButton("Edit Code", callback_data="rm_edit"))
+    safe_send(call.message.chat.id, f"{pe('gear')} Min: ₹{get_redeem_min_withdraw():.0f}\nGST: ₹{get_redeem_gst_cut():.0f}\nEnabled: {'Yes' if toggle else 'No'}", reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data == "rm_set_min")
+def rm_set_min(call):
+    if not is_admin(call.from_user.id): return
+    safe_answer(call)
+    set_state(call.from_user.id, "admin_set_redeem_min")
+    safe_send(call.message.chat.id, f"{pe('pencil')} Enter minimum redeem amount (15 or more, multiple of 5).")
+
+@bot.callback_query_handler(func=lambda call: call.data == "rm_set_gst")
+def rm_set_gst(call):
+    if not is_admin(call.from_user.id): return
+    safe_answer(call)
+    set_state(call.from_user.id, "admin_set_redeem_gst")
+    safe_send(call.message.chat.id, f"{pe('pencil')} Enter GST cut amount (minimum ₹5).")
+
+@bot.callback_query_handler(func=lambda call: call.data == "rm_toggle")
+def rm_toggle(call):
+    if not is_admin(call.from_user.id): return
+    cur = bool(get_setting("redeem_withdraw_enabled"))
+    set_setting("redeem_withdraw_enabled", not cur)
+    safe_answer(call, "Updated!")
+    safe_send(call.message.chat.id, f"{pe('check')} Redeem code withdrawals {'enabled' if not cur else 'disabled'}.")
+
+@bot.callback_query_handler(func=lambda call: call.data == "rm_edit")
+def rm_edit(call):
+    if not is_admin(call.from_user.id): return
+    safe_answer(call)
+    set_state(call.from_user.id, "admin_edit_redeem_code")
+    safe_send(call.message.chat.id, f"{pe('pencil')} Send:\n<code>ID | FIELD | VALUE</code>\nFields: platform, amount, code, note, is_active, gst_cut")
+
+@bot.callback_query_handler(func=lambda call: call.data == "rm_delete_prompt")
+def rm_delete_prompt(call):
+    if not is_admin(call.from_user.id): return
+    safe_answer(call)
+    set_state(call.from_user.id, "admin_delete_redeem_code")
+    safe_send(call.message.chat.id, f"{pe('trash')} Enter redeem code ID to delete permanently.")
 
 # ======================== ADMIN MANAGER ========================
 @bot.message_handler(func=lambda m: m.text == "👮 Admin Manager" and is_admin(m.from_user.id))
