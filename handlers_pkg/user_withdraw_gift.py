@@ -274,25 +274,30 @@ def gift_handler(message):
     show_gift_menu(message.chat.id, user)
 
 def show_gift_menu(chat_id, user):
+    section_title = str(get_setting("bonus_section_title") or "Bonus")
+    games_enabled = bool(get_setting("game_hub_enabled"))
     markup = types.InlineKeyboardMarkup(row_width=2)
     markup.add(
         types.InlineKeyboardButton("🎟 Claim Gift Code", callback_data="redeem_code"),
         types.InlineKeyboardButton("🎁 Create Gift", callback_data="create_gift"),
     )
     markup.add(types.InlineKeyboardButton("🎰 Daily Bonus", callback_data="daily_bonus"))
-    safe_send(
-        chat_id,
-        f"{pe('party')} <b>Gift & Bonus Center</b> {pe('sparkle')}\n"
+    if games_enabled:
+        markup.add(types.InlineKeyboardButton("🎮 Games", callback_data="bonus_games"))
+    body = (
+        f"{pe('party')} <b>{section_title} Center</b> {pe('sparkle')}\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"{pe('fly_money')} <b>Balance:</b> ₹{user['balance']:.2f}\n\n"
+        f"{pe('fly_money')} <b>Balance:</b> ₹{float(user['balance'] or 0):.2f}\n\n"
         f"{pe('star')} <b>What can you do here?</b>\n"
         f"  {pe('arrow')} <b>Redeem Code</b> — Claim a gift code\n"
         f"  {pe('arrow')} <b>Create Gift</b> — Create code from balance\n"
-        f"  {pe('arrow')} <b>Daily Bonus</b> — Free daily coins!\n\n"
-        f"{pe('bulb')} <i>Share codes with friends!</i>\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━",
-        reply_markup=markup
+        f"  {pe('arrow')} <b>Daily Bonus</b> — Free daily coins\n"
     )
+    if games_enabled:
+        body += f"  {pe('arrow')} <b>Games</b> — Play available mini games\n"
+    body += f"\n{pe('bulb')} <i>Share codes with friends!</i>\n━━━━━━━━━━━━━━━━━━━━━━"
+    safe_send(chat_id, body, reply_markup=markup)
+
 
 @bot.callback_query_handler(func=lambda call: call.data == "redeem_code")
 def redeem_code_cb(call):
@@ -339,17 +344,22 @@ def daily_bonus_cb(call):
     if user["last_daily"] == today:
         safe_answer(call, "❌ Already claimed today! Come back tomorrow.", True)
         return
-    bonus = get_setting("daily_bonus")
-    update_user(user_id, balance=user["balance"] + bonus, total_earned=user["total_earned"] + bonus, last_daily=today)
-    safe_answer(call, f"🎉 +₹{bonus} Daily Bonus!")
+    ok_claim, claim_reason = can_claim_daily_bonus(user_id)
+    if not ok_claim:
+        safe_answer(call, claim_reason, True)
+        return
+    bonus = float(get_daily_bonus_amount() or 0)
+    add_user_balance(user_id, bonus, "bonus_balance", "daily_bonus")
+    update_user(user_id, last_daily=today)
+    refreshed = get_user(user_id)
+    safe_answer(call, f"🎉 +₹{bonus:.2f} Daily Bonus!")
     safe_send(
         call.message.chat.id,
         f"{pe('party')} <b>Daily Bonus Claimed!</b> {pe('check')}\n\n"
-        f"{pe('money')} You received <b>₹{bonus}</b>!\n"
-        f"{pe('fly_money')} New Balance: <b>₹{user['balance'] + bonus:.2f}</b>\n\n"
+        f"{pe('money')} You received <b>₹{bonus:.2f}</b>!\n"
+        f"{pe('fly_money')} New Balance: <b>₹{float(refreshed['balance'] or 0):.2f}</b>\n\n"
         f"{pe('bell')} Come back tomorrow for more!"
     )
-
 
 
 @bot.callback_query_handler(func=lambda call: call.data == "bonus_games")
