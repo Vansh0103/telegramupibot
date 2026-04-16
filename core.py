@@ -46,8 +46,8 @@ DEFAULT_SETTINGS = {
     "min_gift_amount": 3,
     "tasks_enabled": True,
     "redeem_withdraw_enabled": True,
-    "redeem_min_withdraw": 10,
-    "redeem_multiple_of": 5,
+    "redeem_min_withdraw": 1,
+    "redeem_multiple_of": 1,
     "redeem_gst_cut": 3,
 }
 
