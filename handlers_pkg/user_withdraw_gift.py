@@ -261,7 +261,7 @@ def cancel_withdraw(call):
         pass
 
 # ======================== GIFT ========================
-@bot.message_handler(func=lambda m: m.text == "🎁 Gift")
+@bot.message_handler(func=lambda m: m.text in ["🎁 Gift", "🎁 Bonus", str(get_setting("bonus_button_label") or "🎁 Gift")])
 def gift_handler(message):
     user_id = message.from_user.id
     if not check_force_join(user_id):
@@ -294,6 +294,49 @@ def show_gift_menu(chat_id, user):
         reply_markup=markup
     )
 
+@bot.callback_query_handler(func=lambda call: call.data == "refer_leaderboard")
+def refer_leaderboard_cb(call):
+    safe_answer(call)
+    rows = get_top_referrers(10)
+    if not rows:
+        safe_send(call.message.chat.id, f"{pe('info')} No leaderboard data yet.")
+        return
+    text = f"{pe('trophy')} <b>Referral Leaderboard</b>\n━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    medals = ["🥇", "🥈", "🥉"]
+    for i, row in enumerate(rows, start=1):
+        badge = medals[i-1] if i <= 3 else f"{i}."
+        text += f"{badge} <b>{row['first_name'] or 'User'}</b> — {int(row['referral_count'] or 0)} refs\n"
+    safe_send(call.message.chat.id, text)
+
+@bot.callback_query_handler(func=lambda call: call.data == "games_menu")
+def games_menu_cb(call):
+    safe_answer(call)
+    user = get_user(call.from_user.id)
+    if not user:
+        return
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    if bool(get_setting("mine_game_enabled")):
+        markup.add(types.InlineKeyboardButton("💣 Play Mine Game", web_app=WebAppInfo(url=f"{PUBLIC_BASE_URL}/games?uid={call.from_user.id}")))
+    markup.add(types.InlineKeyboardButton("🎁 Back to Bonus", callback_data="back_bonus_center"))
+    safe_send(
+        call.message.chat.id,
+        f"{pe('game')} <b>Available Games</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"{pe('active')} Mine Game: {'Enabled' if bool(get_setting('mine_game_enabled')) else 'Disabled'}\n"
+        f"{pe('coins')} Bet Range: ₹{float(get_setting('mine_game_min_bet') or 1):.0f} - ₹{float(get_setting('mine_game_max_bet') or 50):.0f}\n"
+        f"{pe('chart')} Win Ratio: {float(get_setting('mine_game_win_ratio') or 35):.0f}%\n"
+        f"{pe('hourglass')} Cooldown: {int(get_setting('mine_game_cooldown_seconds') or 30)} sec\n\n"
+        f"{pe('soon')} Future games can be added here without removing current features.",
+        reply_markup=markup
+    )
+
+@bot.callback_query_handler(func=lambda call: call.data == "back_bonus_center")
+def back_bonus_center(call):
+    safe_answer(call)
+    user = get_user(call.from_user.id)
+    if user:
+        show_gift_menu(call.message.chat.id, user)
+
 @bot.callback_query_handler(func=lambda call: call.data == "redeem_code")
 def redeem_code_cb(call):
     user_id = call.from_user.id
@@ -314,6 +357,10 @@ def create_gift_cb(call):
         safe_answer(call, "Error!", True)
         return
     min_gift = get_setting("min_gift_amount")
+    need_refs = int(get_setting("claim_code_min_refs") or 0)
+    if int(user["referral_count"] or 0) < need_refs:
+        safe_answer(call, f"❌ Need at least {need_refs} referrals to create/claim code actions!", True)
+        return
     if user["balance"] < min_gift:
         safe_answer(call, f"❌ Need at least ₹{min_gift} balance to create gift!", True)
         return

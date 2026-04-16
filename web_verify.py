@@ -4,6 +4,9 @@ import sqlite3
 import hashlib
 import re
 from flask import Flask, request, jsonify, render_template
+import json
+import random
+from datetime import datetime, timedelta
 
 app = Flask(__name__, template_folder="templates")
 
@@ -257,6 +260,47 @@ def verify_user(user_id: int, ip: str, user_agent: str):
         "bot_username": BOT_USERNAME
     }
 
+
+@app.route("/games")
+def games_home():
+    uid = request.args.get("uid", "").strip()
+    if not uid.isdigit():
+        return jsonify({"error": "Invalid user id"}), 400
+    user_id = int(uid)
+    user = get_user_row(user_id)
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+    rows = [dict(r) for r in get_game_history(user_id, 20)]
+    return jsonify({
+        "status": "ok",
+        "user_id": user_id,
+        "balance": float(user["balance"] or 0),
+        "games_enabled": bool(get_setting("games_enabled", True)),
+        "mine_game_enabled": bool(get_setting("mine_game_enabled", True)),
+        "mine_game_name": get_setting("mine_game_name", "Mine Game"),
+        "min_bet": float(get_setting("mine_game_min_bet", 1) or 1),
+        "max_bet": float(get_setting("mine_game_max_bet", 50) or 50),
+        "win_ratio": float(get_setting("mine_game_win_ratio", 35) or 35),
+        "reward_multiplier": float(get_setting("mine_game_reward_multiplier", 2.0) or 2.0),
+        "daily_limit": int(get_setting("mine_game_daily_limit", 50) or 50),
+        "cooldown_seconds": int(get_setting("mine_game_cooldown_seconds", 30) or 30),
+        "history": rows,
+        "note": "Future games can be added here."
+    })
+
+@app.route("/games/play", methods=["POST"])
+def games_play():
+    payload = request.get_json(silent=True) or request.form or {}
+    uid = str(payload.get("uid", "")).strip()
+    bet = payload.get("bet", 0)
+    if not uid.isdigit():
+        return jsonify({"error": "Invalid user id"}), 400
+    try:
+        bet_amount = float(bet)
+    except Exception:
+        return jsonify({"error": "Invalid bet amount"}), 400
+    ok, data, code = play_mine_game(int(uid), bet_amount)
+    return jsonify(data), code
 
 @app.route("/")
 def home():
