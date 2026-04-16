@@ -48,6 +48,9 @@ def start_handler(message):
         send_join_message(chat_id)
         return
 
+    if not get_setting("ip_verification_enabled"):
+        update_user(user_id, ip_verified=1, verification_status="verified")
+
     send_welcome(chat_id, user_id, first_name, is_new)
 
     if is_new and not is_admin(user_id):
@@ -66,7 +69,10 @@ def start_handler(message):
             pass
 
 def send_welcome(chat_id, user_id, first_name, is_new=False):
+    deduction = maybe_apply_inactivity_deduction(user_id)
     user = get_user(user_id)
+    if deduction:
+        safe_send(message.chat.id, f"{pe('warning')} Inactivity deduction applied: ₹{deduction:.2f}")
     if not user:
         return
     balance = user["balance"]
@@ -199,7 +205,10 @@ def balance_handler(message):
 @bot.callback_query_handler(func=lambda call: call.data == "refresh_balance")
 def refresh_balance(call):
     user_id = call.from_user.id
+    deduction = maybe_apply_inactivity_deduction(user_id)
     user = get_user(user_id)
+    if deduction:
+        safe_send(call.message.chat.id, f"{pe('warning')} Inactivity deduction applied: ₹{deduction:.2f}")
     if not user:
         safe_answer(call, "Error!", True)
         return
@@ -248,36 +257,38 @@ def open_refer_cb(call):
     show_refer(call.message.chat.id, user_id, user)
 
 def show_refer(chat_id, user_id, user):
-    per_refer = get_setting("per_refer")
+    cfg = get_advanced_referral_settings()
     try:
         bot_username = bot.get_me().username
     except:
         bot_username = "bot"
     refer_link = f"https://t.me/{bot_username}?start={user_id}"
-    share_msg = f"💰 Earn ₹{per_refer} per refer! Join {refer_link}"
+    share_msg = f"💰 Join from my link and earn rewards: {refer_link}"
+    top_rows = db_execute("SELECT first_name, referral_count, referral_earnings FROM users ORDER BY referral_count DESC, referral_earnings DESC LIMIT 5", fetch=True) or []
+    board = []
+    for idx, row in enumerate(top_rows, start=1):
+        board.append(f"{idx}. {row['first_name'] or 'User'} — {row['referral_count']} refs | ₹{float(row['referral_earnings'] or 0):.2f}")
+    levels_text = []
+    for level in range(1, int(cfg.get('levels', 3) or 3) + 1):
+        mode = cfg.get(f"level_{level}_mode", "fixed")
+        value = cfg.get(f"level_{level}_value", 0)
+        display = f"{value}%" if str(mode).lower() == 'percent' else f"₹{float(value):.2f}"
+        levels_text.append(f"Level {level}: {display}")
     markup = types.InlineKeyboardMarkup(row_width=1)
-    markup.add(types.InlineKeyboardButton(
-        "📤 Share My Referral Link",
-        url=f"https://t.me/share/url?url={refer_link}&text={share_msg}"
-    ))
+    markup.add(types.InlineKeyboardButton("📤 Share My Referral Link", switch_inline_query=share_msg))
+    markup.add(types.InlineKeyboardButton("🔄 Refresh Leaderboard", callback_data="open_refer"))
+    rules = "\n".join(f"• {x}" for x in levels_text)
+    leaderboard = "\n".join(board) if board else "No data yet"
     text = (
-        f"{pe('fire')} <b>Refer & Earn</b> {pe('fly_money')}\n"
+        f"{pe('people')} <b>Referral Center</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"{pe('star')} <b>Earn ₹{per_refer} per referral!</b>\n\n"
-        f"{pe('link')} <b>Your Referral Link:</b>\n"
-        f"<code>{refer_link}</code>\n\n"
-        f"{pe('chart_up')} <b>Your Stats:</b>\n"
-        f"  {pe('thumbs_up')} Referrals: {user['referral_count']}\n"
-        f"  {pe('money')} Earned: ₹{user['referral_count'] * per_refer:.2f}\n\n"
-        f"{pe('zap')} <b>How It Works:</b>\n"
-        f"  {pe('play')} Share your link\n"
-        f"  {pe('play')} Friend joins the bot\n"
-        f"  {pe('play')} Friend joins all required channels and verifies IP\n"
-        f"  {pe('play')} You get ₹{per_refer} after full verification!\n\n"
-        f"{pe('boom')} <b>Share on:</b> WhatsApp, Instagram,\n"
-        f"Telegram groups, Facebook!\n\n"
-        f"{pe('crown')} <i>No limit! Earn unlimited!</i>\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━"
+        f"{pe('link')} <b>Your Link:</b>\n<code>{refer_link}</code>\n\n"
+        f"{pe('money')} <b>Your Referral Earnings:</b> ₹{float(user['referral_earnings'] or 0):.2f}\n"
+        f"{pe('thumbs_up')} <b>Direct Referrals:</b> {int(user['referral_count'] or 0)}\n"
+        f"{pe('chart_up')} <b>Level stats:</b> L1 {int(user['level1_referrals'] or 0)} | L2 {int(user['level2_referrals'] or 0)} | L3 {int(user['level3_referrals'] or 0)}\n\n"
+        f"{pe('star')} <b>Reward Rules:</b>\n{rules}\n\n"
+        f"{pe('trophy')} <b>Leaderboard</b>\n{leaderboard}"
     )
     safe_send(chat_id, text, reply_markup=markup)
+
 

@@ -261,26 +261,8 @@ def cancel_withdraw(call):
         pass
 
 # ======================== GIFT ========================
-@bot.message_handler(func=lambda m: m.text == "🎟 Gift")
+@bot.message_handler(func=lambda m: m.text == f"🎁 {get_setting('bonus_menu_title') or 'Bonus'}")
 def gift_handler(message):
-    user_id = message.from_user.id
-    if not check_force_join(user_id):
-        send_join_message(message.chat.id)
-        return
-    user = get_user(user_id)
-    if not user:
-        safe_send(message.chat.id, "Please send /start first.")
-        return
-    set_state(user_id, "enter_gift_code")
-    safe_send(
-        message.chat.id,
-        f"{pe('pencil')} <b>Enter Gift Code</b>\n\n"
-        f"{pe('info')} Type your gift code below:\n"
-        f"{pe('arrow')} Example: <code>GIFT1234</code>"
-    )
-
-@bot.message_handler(func=lambda m: m.text in ["🎁 Bonus", str(get_setting("bonus_button_label") or "🎁 Bonus")])
-def bonus_handler(message):
     user_id = message.from_user.id
     if not check_force_join(user_id):
         send_join_message(message.chat.id)
@@ -292,95 +274,25 @@ def bonus_handler(message):
     show_gift_menu(message.chat.id, user)
 
 def show_gift_menu(chat_id, user):
-    bonus_title = str(get_setting("bonus_menu_title") or "Bonus Center")
-    games_enabled = bool(get_setting("games_enabled")) and bool(get_setting("games_menu_enabled"))
-    mine_enabled = bool(get_setting("mine_game_enabled"))
-
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    markup.add(types.InlineKeyboardButton("🎁 Gift Options", callback_data="gift_options_menu"))
-    if games_enabled:
-        markup.add(types.InlineKeyboardButton("🎮 Games", callback_data="games_menu"))
-
-    extra_lines = f"  {pe('arrow')} <b>Gift Options</b> — Claim code, create gift, daily bonus\n"
-    if games_enabled:
-        extra_lines += f"  {pe('arrow')} <b>Games</b> — Play bonus games and check results\n"
-        if mine_enabled:
-            extra_lines += f"  {pe('arrow')} <b>Mine Game</b> — Available now in Games\n"
-
-    safe_send(
-        chat_id,
-        f"{pe('party')} <b>{bonus_title}</b> {pe('sparkle')}\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"{pe('fly_money')} <b>Balance:</b> ₹{user['balance']:.2f}\n\n"
-        f"{pe('star')} <b>What can you do here?</b>\n"
-        f"{extra_lines}\n"
-        f"{pe('bulb')} <i>Choose Gift or Games below.</i>\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━",
-        reply_markup=markup
-    )
-
-@bot.callback_query_handler(func=lambda call: call.data == "gift_options_menu")
-def gift_options_menu_cb(call):
-    safe_answer(call)
     markup = types.InlineKeyboardMarkup(row_width=2)
     markup.add(
         types.InlineKeyboardButton("🎟 Claim Gift Code", callback_data="redeem_code"),
         types.InlineKeyboardButton("🎁 Create Gift", callback_data="create_gift"),
     )
     markup.add(types.InlineKeyboardButton("🎰 Daily Bonus", callback_data="daily_bonus"))
-    markup.add(types.InlineKeyboardButton("🔙 Back to Bonus", callback_data="back_bonus_center"))
     safe_send(
-        call.message.chat.id,
-        f"{pe('gift')} <b>Gift Options</b>\n"
+        chat_id,
+        f"{pe('party')} <b>Gift & Bonus Center</b> {pe('sparkle')}\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"{pe('arrow')} Redeem gift code\n"
-        f"{pe('arrow')} Create your own gift\n"
-        f"{pe('arrow')} Claim daily bonus",
+        f"{pe('fly_money')} <b>Balance:</b> ₹{user['balance']:.2f}\n\n"
+        f"{pe('star')} <b>What can you do here?</b>\n"
+        f"  {pe('arrow')} <b>Redeem Code</b> — Claim a gift code\n"
+        f"  {pe('arrow')} <b>Create Gift</b> — Create code from balance\n"
+        f"  {pe('arrow')} <b>Daily Bonus</b> — Free daily coins!\n\n"
+        f"{pe('bulb')} <i>Share codes with friends!</i>\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━",
         reply_markup=markup
     )
-
-@bot.callback_query_handler(func=lambda call: call.data == "refer_leaderboard")
-def refer_leaderboard_cb(call):
-    safe_answer(call)
-    rows = get_top_referrers(10)
-    if not rows:
-        safe_send(call.message.chat.id, f"{pe('info')} No leaderboard data yet.")
-        return
-    text = f"{pe('trophy')} <b>Referral Leaderboard</b>\n━━━━━━━━━━━━━━━━━━━━━━\n\n"
-    medals = ["🥇", "🥈", "🥉"]
-    for i, row in enumerate(rows, start=1):
-        badge = medals[i-1] if i <= 3 else f"{i}."
-        text += f"{badge} <b>{row['first_name'] or 'User'}</b> — {int(row['referral_count'] or 0)} refs\n"
-    safe_send(call.message.chat.id, text)
-
-@bot.callback_query_handler(func=lambda call: call.data == "games_menu")
-def games_menu_cb(call):
-    safe_answer(call)
-    user = get_user(call.from_user.id)
-    if not user:
-        return
-    markup = types.InlineKeyboardMarkup(row_width=1)
-    if bool(get_setting("mine_game_enabled")):
-        markup.add(types.InlineKeyboardButton("💣 Play Mine Game", web_app=WebAppInfo(url=f"{PUBLIC_BASE_URL}/games?uid={call.from_user.id}")))
-    markup.add(types.InlineKeyboardButton("🎁 Back to Bonus", callback_data="back_bonus_center"))
-    safe_send(
-        call.message.chat.id,
-        f"{pe('game')} <b>Available Games</b>\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"{pe('active')} Mine Game: {'Enabled' if bool(get_setting('mine_game_enabled')) else 'Disabled'}\n"
-        f"{pe('coins')} Bet Range: ₹{float(get_setting('mine_game_min_bet') or 1):.0f} - ₹{float(get_setting('mine_game_max_bet') or 50):.0f}\n"
-        f"{pe('chart')} Win Ratio: {float(get_setting('mine_game_win_ratio') or 35):.0f}%\n"
-        f"{pe('hourglass')} Cooldown: {int(get_setting('mine_game_cooldown_seconds') or 30)} sec\n\n"
-        f"{pe('soon')} Future games can be added here without removing current features.",
-        reply_markup=markup
-    )
-
-@bot.callback_query_handler(func=lambda call: call.data == "back_bonus_center")
-def back_bonus_center(call):
-    safe_answer(call)
-    user = get_user(call.from_user.id)
-    if user:
-        show_gift_menu(call.message.chat.id, user)
 
 @bot.callback_query_handler(func=lambda call: call.data == "redeem_code")
 def redeem_code_cb(call):
@@ -402,10 +314,6 @@ def create_gift_cb(call):
         safe_answer(call, "Error!", True)
         return
     min_gift = get_setting("min_gift_amount")
-    need_refs = int(get_setting("claim_code_min_refs") or 0)
-    if int(user["referral_count"] or 0) < need_refs:
-        safe_answer(call, f"❌ Need at least {need_refs} referrals to create/claim code actions!", True)
-        return
     if user["balance"] < min_gift:
         safe_answer(call, f"❌ Need at least ₹{min_gift} balance to create gift!", True)
         return
@@ -420,6 +328,42 @@ def create_gift_cb(call):
         f"{pe('arrow')} Enter gift amount:"
     )
 
+
+@bot.callback_query_handler(func=lambda call: call.data == "bonus_gift_menu")
+def bonus_gift_menu(call):
+    safe_answer(call)
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        types.InlineKeyboardButton("🎟 Claim Gift Code", callback_data="redeem_code"),
+        types.InlineKeyboardButton("🎁 Create Gift", callback_data="create_gift"),
+    )
+    PLACEHOLDER
+
+@bot.callback_query_handler(func=lambda call: call.data == "bonus_games_menu")
+def bonus_games_menu(call):
+    safe_answer(call)
+    cfg = get_games_config()
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    web_url = get_bonus_menu_webapp_url(call.from_user.id, 'games')
+    if cfg.get('mines_enabled') and web_url:
+        markup.add(types.InlineKeyboardButton("💣 Play Mine Game", web_app=WebAppInfo(url=web_url)))
+    elif cfg.get('mines_enabled'):
+        markup.add(types.InlineKeyboardButton("💣 Mine Game Enabled (set PUBLIC_BASE_URL)", callback_data="noop"))
+    markup.add(types.InlineKeyboardButton("📜 My Game History", callback_data="game_history"))
+    safe_send(call.message.chat.id, f"{pe('game')} <b>Games</b>\nMine game is available now. More games can be added later from templates.", reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data == "game_history")
+def game_history(call):
+    safe_answer(call)
+    rows = db_execute("SELECT * FROM game_results WHERE user_id=? ORDER BY id DESC LIMIT 10", (call.from_user.id,), fetch=True) or []
+    if not rows:
+        safe_send(call.message.chat.id, f"{pe('info')} No game history yet.")
+        return
+    lines = []
+    for row in rows:
+        lines.append(f"• {row['created_at'][:16]} | {row['game_key']} | {row['result']} | bet ₹{row['bet_amount']:.2f} | net ₹{row['net_change']:.2f}")
+    safe_send(call.message.chat.id, f"{pe('list')} <b>Recent Game History</b>\n" + "\n".join(lines))
+
 @bot.callback_query_handler(func=lambda call: call.data == "daily_bonus")
 def daily_bonus_cb(call):
     user_id = call.from_user.id
@@ -427,18 +371,25 @@ def daily_bonus_cb(call):
     if not user:
         safe_answer(call, "Error!", True)
         return
-    today = datetime.now().strftime("%Y-%m-%d")
+    deduction = maybe_apply_inactivity_deduction(user_id)
+    if deduction:
+        user = get_user(user_id)
+    today = today_str()
     if user["last_daily"] == today:
         safe_answer(call, "❌ Already claimed today! Come back tomorrow.", True)
         return
-    bonus = get_setting("daily_bonus")
-    update_user(user_id, balance=user["balance"] + bonus, total_earned=user["total_earned"] + bonus, last_daily=today)
-    safe_answer(call, f"🎉 +₹{bonus} Daily Bonus!")
-    safe_send(
-        call.message.chat.id,
-        f"{pe('party')} <b>Daily Bonus Claimed!</b> {pe('check')}\n\n"
-        f"{pe('money')} You received <b>₹{bonus}</b>!\n"
-        f"{pe('fly_money')} New Balance: <b>₹{user['balance'] + bonus:.2f}</b>\n\n"
-        f"{pe('bell')} Come back tomorrow for more!"
-    )
+    req = int(get_setting("daily_bonus_referrals_required") or 0)
+    if int(user["referral_count"] or 0) < req:
+        safe_answer(call, f"❌ Need at least {req} direct referral(s) to claim daily bonus.", True)
+        return
+    bonus = get_daily_bonus_amount()
+    update_user(user_id,
+                balance=round(float(user["balance"] or 0) + bonus, 2),
+                bonus_balance=round(float(user["bonus_balance"] or 0) + bonus, 2),
+                total_earned=round(float(user["total_earned"] or 0) + bonus, 2),
+                last_daily=today,
+                last_activity_at=now_str())
+    db_execute("INSERT INTO bonus_history (user_id, amount, bonus_type, created_at) VALUES (?,?,?,?)", (user_id, bonus, 'daily_random' if get_setting('random_daily_bonus_enabled') else 'daily_fixed', now_str()))
+    safe_answer(call, f"🎉 +₹{bonus:.2f} Daily Bonus!")
+    safe_send(call.message.chat.id, f"{pe('party')} <b>Daily Bonus Claimed!</b>\n\n{pe('money')} Bonus: <b>₹{bonus:.2f}</b>\n{pe('fly_money')} New Balance: <b>₹{float(get_user(user_id)['balance'] or 0):.2f}</b>")
 

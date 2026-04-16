@@ -1,6 +1,6 @@
 from core import *
 from .basic_user import send_db, start_handler, balance_handler, refer_handler
-from .user_withdraw_gift import withdraw_handler, gift_handler, bonus_handler
+from .user_withdraw_gift import withdraw_handler, gift_handler
 from .user_tasks import tasks_handler
 from .admin_main import (
     admin_cmd, admin_dashboard, admin_all_users, admin_withdrawals, admin_settings,
@@ -64,11 +64,8 @@ def universal_handler(message):
         if text == "🏧 Withdraw":
             withdraw_handler(message)
             return
-        if text == "🎟 Gift":
+        if text == "🎁 Gift":
             gift_handler(message)
-            return
-        if text in ["🎁 Bonus", str(get_setting("bonus_button_label") or "🎁 Bonus")]:
-            bonus_handler(message)
             return
         if text == "📋 Tasks":
             tasks_handler(message)
@@ -219,6 +216,7 @@ def universal_handler(message):
         except ValueError:
             safe_send(message.chat.id, f"{pe('cross')} Enter a valid number!")
             return
+        maybe_apply_inactivity_deduction(user_id)
         user = get_user(user_id)
         min_w = get_setting("min_withdraw")
         max_w = get_setting("max_withdraw_per_day")
@@ -228,8 +226,12 @@ def universal_handler(message):
         if amount > max_w:
             safe_send(message.chat.id, f"{pe('cross')} Maximum is ₹{max_w}")
             return
-        if amount > user["balance"]:
-            safe_send(message.chat.id, f"{pe('cross')} Insufficient balance! You have ₹{user['balance']:.2f}")
+        bonus_balance = float(user["bonus_balance"] or 0)
+        tax = round(amount * float(get_setting("withdraw_bonus_tax_percent") or 0) / 100.0, 2) if (amount <= bonus_balance and get_setting("withdraw_bonus_tax_enabled")) else 0
+        upi_gst = round(amount * float(get_setting("upi_withdraw_gst_percent") or 0) / 100.0, 2) if get_setting("upi_withdraw_gst_enabled") else 0
+        total_charge = round(amount + tax + upi_gst, 2)
+        if total_charge > float(user["balance"] or 0):
+            safe_send(message.chat.id, f"{pe('cross')} Insufficient balance! Need ₹{total_charge:.2f}, you have ₹{float(user['balance'] or 0):.2f}")
             return
         state_data = get_state_data(user_id)
         upi_id = state_data.get("upi_id", user["upi_id"])
@@ -243,10 +245,12 @@ def universal_handler(message):
             message.chat.id,
             f"{pe('warning')} <b>Confirm Withdrawal</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"{pe('fly_money')} <b>Amount:</b> ₹{amount}\n"
-            f"{pe('link')} <b>UPI:</b> <code>{upi_id}</code>\n\n"
-            f"{pe('info')} Tap Confirm to proceed.\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━",
+            f"{pe('fly_money')} <b>Payout Amount:</b> ₹{amount:.2f}\n"
+            f"{pe('diamond')} <b>Bonus Balance:</b> ₹{bonus_balance:.2f}\n"
+            f"{pe('money')} <b>Bonus Tax:</b> ₹{tax:.2f}\n"
+            f"{pe('money')} <b>UPI GST:</b> ₹{upi_gst:.2f}\n"
+            f"{pe('chart_up')} <b>Total Deduction:</b> ₹{total_charge:.2f}\n"
+            f"{pe('link')} <b>UPI:</b> <code>{upi_id}</code>",
             reply_markup=markup
         )
         return
@@ -259,6 +263,10 @@ def universal_handler(message):
         if not gift:
             safe_send(message.chat.id, f"{pe('cross')} <b>Invalid or Expired Code!</b>\nCode: <code>{code}</code>")
             return
+        req_refs = int(get_setting("gift_code_claim_referrals_required") or 0)
+        if int(get_user(user_id)["referral_count"] or 0) < req_refs:
+            safe_send(message.chat.id, f"{pe('cross')} Need at least {req_refs} referral(s) to claim a gift code.")
+            return
         existing = db_execute("SELECT * FROM gift_claims WHERE code=? AND user_id=?", (code, user_id), fetchone=True)
         if existing:
             safe_send(message.chat.id, f"{pe('cross')} <b>Already Redeemed!</b>\nYou already used code <code>{code}</code>.")
@@ -267,16 +275,10 @@ def universal_handler(message):
             db_execute("UPDATE gift_codes SET is_active=0 WHERE code=?", (code,))
             safe_send(message.chat.id, f"{pe('cross')} <b>Code Exhausted!</b>\nThis code has reached max redemptions.")
             return
-        need_refs = int(get_setting("claim_code_min_refs") or 0)
-        user = get_user(user_id)
-        if int(user["referral_count"] or 0) < need_refs:
-            safe_send(message.chat.id, f"{pe('cross')} Need minimum {need_refs} referrals to claim code bonus.")
-            return
         amount = gift["amount"]
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        apply_balance_change(user_id, amount, source_type="claim", bonus_type="gift_claim", meta=f"code={code}")
         user = get_user(user_id)
-        update_user(user_id, last_code_claim_at=now)
+        update_user(user_id, balance=user["balance"] + amount, total_earned=user["total_earned"] + amount)
         db_execute("UPDATE gift_codes SET total_claims=total_claims+1, claimed_by=?, claimed_at=? WHERE code=?", (user_id, now, code))
         db_execute("INSERT INTO gift_claims (code, user_id, claimed_at) VALUES (?,?,?)", (code, user_id, now))
         if gift["total_claims"] + 1 >= gift["max_claims"]:
@@ -312,12 +314,7 @@ def universal_handler(message):
         clear_state(user_id)
         code = generate_code()
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        fee_pct = float(get_setting("gift_create_gst_percent") or 0) if bool(get_setting("gst_on_gift_create_enabled")) else 0
-        total_deduct = round(amount + ((amount * fee_pct) / 100.0), 2)
-        if total_deduct > float(user["balance"] or 0):
-            safe_send(message.chat.id, f"{pe('cross')} Need ₹{total_deduct:.2f} including gift creation fee.")
-            return
-        update_user(user_id, balance=round(float(user["balance"] or 0) - total_deduct, 4))
+        update_user(user_id, balance=user["balance"] - amount)
         db_execute(
             "INSERT INTO gift_codes (code, amount, created_by, created_at, gift_type, max_claims) VALUES (?,?,?,?,?,?)",
             (code, amount, user_id, now, "user", 1)
@@ -592,8 +589,7 @@ def universal_handler(message):
             return
         clear_state(user_id)
         set_setting("per_refer", val)
-        set_setting("referral_level_1_reward", val)
-        safe_send(message.chat.id, f"{pe('check')} Level 1 referral reward = ₹{val}")
+        safe_send(message.chat.id, f"{pe('check')} Per Refer = ₹{val}")
         return
 
     if state == "admin_set_min_withdraw":
@@ -627,124 +623,6 @@ def universal_handler(message):
         clear_state(user_id)
         set_setting("daily_bonus", val)
         safe_send(message.chat.id, f"{pe('check')} Daily Bonus = ₹{val}")
-        return
-
-    if state == "admin_set_ref_l2":
-        val = float(text)
-        clear_state(user_id)
-        set_setting("referral_level_2_reward", val)
-        safe_send(message.chat.id, f"{pe('check')} Level 2 referral reward = ₹{val:.2f}")
-        return
-
-    if state == "admin_set_ref_l3":
-        val = float(text)
-        clear_state(user_id)
-        set_setting("referral_level_3_reward", val)
-        safe_send(message.chat.id, f"{pe('check')} Level 3 referral reward = ₹{val:.2f}")
-        return
-
-    if state == "admin_set_daily_refs":
-        val = int(text)
-        clear_state(user_id)
-        set_setting("daily_bonus_min_refs", val)
-        safe_send(message.chat.id, f"{pe('check')} Daily bonus minimum referrals = {val}")
-        return
-
-    if state == "admin_set_claim_refs":
-        val = int(text)
-        clear_state(user_id)
-        set_setting("claim_code_min_refs", val)
-        safe_send(message.chat.id, f"{pe('check')} Claim code minimum referrals = {val}")
-        return
-
-    if state == "admin_set_bonus_tax":
-        val = float(text)
-        clear_state(user_id)
-        set_setting("withdraw_bonus_tax_percent", val)
-        safe_send(message.chat.id, f"{pe('check')} Bonus-only withdraw tax = {val:.2f}%")
-        return
-
-    if state == "admin_set_upi_gst":
-        val = float(text)
-        clear_state(user_id)
-        set_setting("withdraw_upi_gst_percent", val)
-        safe_send(message.chat.id, f"{pe('check')} UPI GST = {val:.2f}%")
-        return
-
-    if state == "admin_set_upi_fee":
-        val = float(text)
-        clear_state(user_id)
-        set_setting("withdraw_upi_flat_fee", val)
-        safe_send(message.chat.id, f"{pe('check')} UPI flat fee = ₹{val:.2f}")
-        return
-
-    if state == "admin_set_daily_random":
-        try:
-            low, high = [float(x.strip()) for x in text.split('-', 1)]
-        except Exception:
-            safe_send(message.chat.id, f"{pe('cross')} Format: <code>MIN-MAX</code>")
-            return
-        if high < low:
-            low, high = high, low
-        clear_state(user_id)
-        set_setting("daily_bonus_random_enabled", True)
-        set_setting("daily_bonus_random_min", low)
-        set_setting("daily_bonus_random_max", high)
-        safe_send(message.chat.id, f"{pe('check')} Random daily bonus range = ₹{low:.2f} - ₹{high:.2f}")
-        return
-
-    if state == "admin_set_bonus_title":
-        clear_state(user_id)
-        set_setting("bonus_menu_title", text.strip())
-        safe_send(message.chat.id, f"{pe('check')} Bonus menu title updated.")
-        return
-
-    if state == "admin_set_bonus_button":
-        clear_state(user_id)
-        set_setting("bonus_button_label", text.strip())
-        safe_send(message.chat.id, f"{pe('check')} Bonus button label updated to: {text.strip()}")
-        return
-
-    if state == "admin_set_mine_ratio":
-        val = float(text)
-        clear_state(user_id)
-        set_setting("mine_game_win_ratio", val)
-        safe_send(message.chat.id, f"{pe('check')} Mine win ratio = {val:.2f}%")
-        return
-
-    if state == "admin_set_mine_reward":
-        val = float(text)
-        clear_state(user_id)
-        set_setting("mine_game_reward_multiplier", val)
-        safe_send(message.chat.id, f"{pe('check')} Mine reward multiplier = x{val:.2f}")
-        return
-
-    if state == "admin_set_mine_cooldown":
-        val = int(text)
-        clear_state(user_id)
-        set_setting("mine_game_cooldown_seconds", val)
-        safe_send(message.chat.id, f"{pe('check')} Mine cooldown = {val} sec")
-        return
-
-    if state == "admin_set_mine_bet_range":
-        try:
-            low, high = [float(x.strip()) for x in text.split('-', 1)]
-        except Exception:
-            safe_send(message.chat.id, f"{pe('cross')} Format: <code>MIN-MAX</code>")
-            return
-        if high < low:
-            low, high = high, low
-        clear_state(user_id)
-        set_setting("mine_game_min_bet", low)
-        set_setting("mine_game_max_bet", high)
-        safe_send(message.chat.id, f"{pe('check')} Mine bet range = ₹{low:.2f} - ₹{high:.2f}")
-        return
-
-    if state == "admin_set_mine_limit":
-        val = int(text)
-        clear_state(user_id)
-        set_setting("mine_game_daily_limit", val)
-        safe_send(message.chat.id, f"{pe('check')} Mine daily limit = {val}")
         return
 
     if state == "admin_set_max_withdraw":
@@ -784,6 +662,107 @@ def universal_handler(message):
         clear_state(user_id)
         set_setting("withdraw_image", text)
         safe_send(message.chat.id, f"{pe('check')} Withdraw image updated!")
+        return
+
+
+    if state == "admin_set_daily_bonus_minmax":
+        try:
+            a, b = [float(x.strip()) for x in text.split("-")]
+        except:
+            safe_send(message.chat.id, f"{pe('cross')} Format: <code>MIN-MAX</code>")
+            return
+        clear_state(user_id)
+        set_setting("daily_bonus_min", min(a,b))
+        set_setting("daily_bonus_max", max(a,b))
+        safe_send(message.chat.id, f"{pe('check')} Random daily bonus range set to ₹{min(a,b):.2f} - ₹{max(a,b):.2f}")
+        return
+
+    if state == "admin_set_bonus_tax":
+        try:
+            val = float(text)
+        except:
+            safe_send(message.chat.id, f"{pe('cross')} Enter valid tax percent!")
+            return
+        clear_state(user_id)
+        set_setting("withdraw_bonus_tax_percent", val)
+        safe_send(message.chat.id, f"{pe('check')} Bonus withdrawal tax set to {val:.2f}%")
+        return
+
+    if state == "admin_set_upi_gst":
+        try:
+            val = float(text)
+        except:
+            safe_send(message.chat.id, f"{pe('cross')} Enter valid GST percent!")
+            return
+        clear_state(user_id)
+        set_setting("upi_withdraw_gst_percent", val)
+        safe_send(message.chat.id, f"{pe('check')} UPI GST set to {val:.2f}%")
+        return
+
+    if state == "admin_set_daily_ref_req":
+        try:
+            val = int(text)
+        except:
+            safe_send(message.chat.id, f"{pe('cross')} Enter valid number!")
+            return
+        clear_state(user_id)
+        set_setting("daily_bonus_referrals_required", val)
+        safe_send(message.chat.id, f"{pe('check')} Daily bonus referral requirement = {val}")
+        return
+
+    if state == "admin_set_code_ref_req":
+        try:
+            val = int(text)
+        except:
+            safe_send(message.chat.id, f"{pe('cross')} Enter valid number!")
+            return
+        clear_state(user_id)
+        set_setting("gift_code_claim_referrals_required", val)
+        safe_send(message.chat.id, f"{pe('check')} Gift code claim referral requirement = {val}")
+        return
+
+    if state == "admin_set_inactivity_days":
+        try:
+            val = int(text)
+        except:
+            safe_send(message.chat.id, f"{pe('cross')} Enter valid day count!")
+            return
+        clear_state(user_id)
+        cfg = get_activity_deduction_settings()
+        cfg["inactivity_days"] = max(1, val)
+        set_setting("activity_deduction", cfg)
+        safe_send(message.chat.id, f"{pe('check')} Inactivity days set to {max(1,val)}")
+        return
+
+    if state == "admin_set_inactivity_pct":
+        try:
+            val = float(text)
+        except:
+            safe_send(message.chat.id, f"{pe('cross')} Enter valid percent!")
+            return
+        clear_state(user_id)
+        cfg = get_activity_deduction_settings()
+        cfg["deduction_percent"] = max(0, min(99, val))
+        set_setting("activity_deduction", cfg)
+        safe_send(message.chat.id, f"{pe('check')} Inactivity deduction set to {cfg['deduction_percent']}%")
+        return
+
+    if state == "admin_set_referral_level":
+        try:
+            level, mode, value = text.split()
+            level = int(level)
+            value = float(value)
+            mode = mode.lower()
+            assert level in (1, 2, 3) and mode in ("fixed", "percent")
+        except:
+            safe_send(message.chat.id, f"{pe('cross')} Format: <code>LEVEL MODE VALUE</code>\nExample: <code>2 fixed 1.5</code> or <code>3 percent 10</code>")
+            return
+        clear_state(user_id)
+        cfg = get_advanced_referral_settings()
+        cfg[f"level_{level}_mode"] = mode
+        cfg[f"level_{level}_value"] = value
+        set_setting("advanced_referral", cfg)
+        safe_send(message.chat.id, f"{pe('check')} Referral level {level} updated: {mode} {value}")
         return
 
     if state == "admin_reset_user":
