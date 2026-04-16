@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{{ mine_game_name }}</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; font-family: Arial, sans-serif; background: #0f172a; color: #fff;
+      padding: 16px;
+    }
+    .wrap { max-width: 520px; margin: 0 auto; }
+    .card {
+      background: #111827; border: 1px solid #1f2937; border-radius: 16px; padding: 16px; margin-bottom: 16px;
+    }
+    h1 { font-size: 24px; margin: 0 0 8px; }
+    .muted { color: #cbd5e1; font-size: 14px; }
+    .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+    input, button {
+      border-radius: 12px; border: 1px solid #334155; padding: 12px; font-size: 16px;
+    }
+    input { background: #0b1220; color: #fff; flex: 1; min-width: 120px; }
+    button { background: #2563eb; color: #fff; cursor: pointer; min-width: 120px; }
+    button.secondary { background: #374151; }
+    button:disabled { opacity: .6; cursor: not-allowed; }
+    .grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin-top: 16px; }
+    .cell {
+      aspect-ratio: 1/1; border-radius: 14px; background: #1e293b; border: 1px solid #334155;
+      display: flex; align-items: center; justify-content: center; font-size: 22px; cursor: pointer;
+    }
+    .cell.safe { background: #14532d; }
+    .cell.mine { background: #7f1d1d; }
+    .pill { display: inline-block; background: #1e293b; border-radius: 999px; padding: 6px 10px; margin: 4px 6px 0 0; font-size: 13px; }
+    .status { font-size: 15px; margin-top: 10px; min-height: 24px; }
+    .history-item { padding: 10px 0; border-bottom: 1px solid #1f2937; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>💣 {{ mine_game_name }}</h1>
+      <div class="muted">Play from Telegram WebApp. Admin controls all limits, ratio, rewards, and cooldown.</div>
+      <div style="margin-top:12px;">
+        <span class="pill">User ID: {{ user_id }}</span>
+        <span class="pill">Balance: ₹<span id="balance">{{ '%.2f'|format(balance) }}</span></span>
+        <span class="pill">Bet Range: ₹{{ '%.0f'|format(min_bet) }} - ₹{{ '%.0f'|format(max_bet) }}</span>
+        <span class="pill">Reward x{{ reward_multiplier }}</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="row">
+        <input id="bet" type="number" min="{{ min_bet }}" max="{{ max_bet }}" step="0.01" value="{{ min_bet }}" />
+        <button id="playBtn">Play Round</button>
+      </div>
+      <div class="status" id="status">Tap Play Round to start.</div>
+      <div class="grid" id="grid"></div>
+    </div>
+
+    <div class="card">
+      <strong>Recent History</strong>
+      <div id="history" class="muted" style="margin-top:8px;">Loading...</div>
+    </div>
+  </div>
+
+<script>
+const uid = {{ user_id|tojson }};
+const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
+if (tg) { try { tg.ready(); tg.expand(); } catch(e) {} }
+
+const statusEl = document.getElementById('status');
+const balanceEl = document.getElementById('balance');
+const historyEl = document.getElementById('history');
+const gridEl = document.getElementById('grid');
+const playBtn = document.getElementById('playBtn');
+const betEl = document.getElementById('bet');
+
+function renderGrid(result) {
+  gridEl.innerHTML = '';
+  const mineIndex = Number(result.mine_index ?? -1);
+  const picked = Number(result.picked_index ?? -1);
+  for (let i = 0; i < 25; i++) {
+    const cell = document.createElement('div');
+    cell.className = 'cell';
+    if (i === mineIndex) {
+      cell.classList.add('mine');
+      cell.textContent = '💣';
+    } else if (i === picked || result.result === 'win') {
+      cell.classList.add('safe');
+      cell.textContent = '💎';
+    } else {
+      cell.textContent = '❓';
+    }
+    gridEl.appendChild(cell);
+  }
+}
+
+function renderHistory(items) {
+  if (!items || !items.length) {
+    historyEl.innerHTML = 'No game history yet.';
+    return;
+  }
+  historyEl.innerHTML = items.map(item => {
+    const amount = Number(item.amount || 0).toFixed(2);
+    const reward = Number(item.reward || 0).toFixed(2);
+    return `<div class="history-item">${item.game_type || 'mine'} • ${item.result || '-'} • Bet ₹${amount} • Reward ₹${reward}</div>`;
+  }).join('');
+}
+
+async function loadState() {
+  const res = await fetch(`/games?uid=${uid}&format=json`, { headers: { 'Accept': 'application/json' } });
+  const data = await res.json();
+  if (!res.ok) {
+    statusEl.textContent = data.error || 'Failed to load game.';
+    return;
+  }
+  balanceEl.textContent = Number(data.balance || 0).toFixed(2);
+  renderHistory(data.history || []);
+}
+
+async function playGame() {
+  playBtn.disabled = true;
+  statusEl.textContent = 'Playing...';
+  gridEl.innerHTML = '';
+  try {
+    const bet = betEl.value;
+    const res = await fetch('/games/play', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      body: JSON.stringify({ uid, bet })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      statusEl.textContent = data.error || data.message || 'Game failed.';
+      return;
+    }
+    balanceEl.textContent = Number(data.balance || 0).toFixed(2);
+    statusEl.textContent = data.message || (data.result === 'win' ? 'You won!' : 'You lost.');
+    renderGrid(data);
+    await loadState();
+  } catch (e) {
+    statusEl.textContent = 'Network/server error.';
+  } finally {
+    playBtn.disabled = false;
+  }
+}
+
+playBtn.addEventListener('click', playGame);
+loadState();
+</script>
+</body>
+</html>

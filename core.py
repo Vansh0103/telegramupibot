@@ -6,7 +6,7 @@ import time
 import random
 import string
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
 import csv
 import io
@@ -33,10 +33,17 @@ DEFAULT_SETTINGS = {
     "min_withdraw": 5,
     "welcome_bonus": 0.5,
     "daily_bonus": 0.5,
+    "daily_bonus_random_enabled": True,
+    "daily_bonus_random_min": 0.2,
+    "daily_bonus_random_max": 1.0,
+    "daily_bonus_min_refs": 1,
+    "claim_code_min_refs": 2,
     "max_withdraw_per_day": 100,
     "withdraw_enabled": True,
     "refer_enabled": True,
     "gift_enabled": True,
+    "bonus_menu_title": "Bonus Center",
+    "bonus_button_label": "🎁 Gift",
     "bot_maintenance": False,
     "welcome_image": WELCOME_IMAGE,
     "withdraw_image": WITHDRAWAL_IMAGE,
@@ -49,6 +56,51 @@ DEFAULT_SETTINGS = {
     "redeem_min_withdraw": 10,
     "redeem_multiple_of": 5,
     "redeem_gst_cut": 3,
+    "referral_system_enabled": True,
+    "referral_levels": 3,
+    "referral_level_1_mode": "fixed",
+    "referral_level_1_reward": 2.0,
+    "referral_level_2_mode": "fixed",
+    "referral_level_2_reward": 1.0,
+    "referral_level_3_mode": "fixed",
+    "referral_level_3_reward": 0.5,
+    "referral_level_1_percent": 100,
+    "referral_level_2_percent": 50,
+    "referral_level_3_percent": 25,
+    "referral_require_verified_user": True,
+    "referral_require_ip_verified": True,
+    "referral_min_user_refs_for_bonus": 0,
+    "inactivity_deduction_enabled": False,
+    "inactivity_deduction_percent": 10,
+    "inactivity_check_hours": 24,
+    "inactivity_min_balance": 0.01,
+    "inactivity_requires_no_referrals": True,
+    "inactivity_requires_no_activity": True,
+    "withdraw_bonus_tax_enabled": True,
+    "withdraw_bonus_tax_percent": 70,
+    "withdraw_upi_gst_percent": 10,
+    "withdraw_upi_flat_fee": 0,
+    "withdraw_upi_gst_enabled": True,
+    "tax_bonus_balance_enabled": True,
+    "tax_claim_balance_enabled": True,
+    "gst_on_upi_enabled": True,
+    "gst_on_redeem_enabled": True,
+    "gst_on_gift_create_enabled": False,
+    "gift_create_gst_percent": 0,
+    "announcements_enabled": True,
+    "games_enabled": True,
+    "games_menu_enabled": True,
+    "mine_game_enabled": True,
+    "mine_game_name": "Mine Game",
+    "mine_game_base_bet": 1,
+    "mine_game_min_bet": 1,
+    "mine_game_max_bet": 50,
+    "mine_game_win_ratio": 35,
+    "mine_game_reward_multiplier": 2.0,
+    "mine_game_loss_multiplier": 1.0,
+    "mine_game_daily_limit": 50,
+    "mine_game_cooldown_seconds": 30,
+    "mine_game_show_history": True,
 }
 
 PE = {
@@ -252,6 +304,41 @@ def init_db():
             assigned_at TEXT DEFAULT '',
             note TEXT DEFAULT ''
         );
+        CREATE TABLE IF NOT EXISTS user_activity_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            action_type TEXT DEFAULT '',
+            amount REAL DEFAULT 0,
+            meta TEXT DEFAULT '',
+            created_at TEXT DEFAULT ''
+        );
+        CREATE TABLE IF NOT EXISTS referral_commissions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_user_id INTEGER,
+            beneficiary_user_id INTEGER,
+            referral_level INTEGER DEFAULT 1,
+            amount REAL DEFAULT 0,
+            commission_mode TEXT DEFAULT 'fixed',
+            created_at TEXT DEFAULT ''
+        );
+        CREATE TABLE IF NOT EXISTS game_sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            game_key TEXT DEFAULT '',
+            bet_amount REAL DEFAULT 0,
+            reward_amount REAL DEFAULT 0,
+            result TEXT DEFAULT '',
+            session_meta TEXT DEFAULT '',
+            created_at TEXT DEFAULT ''
+        );
+        CREATE TABLE IF NOT EXISTS system_announcements (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT DEFAULT '',
+            body TEXT DEFAULT '',
+            is_active INTEGER DEFAULT 1,
+            created_by INTEGER DEFAULT 0,
+            created_at TEXT DEFAULT ''
+        );
     """)
 
     try:
@@ -297,6 +384,44 @@ def init_db():
         c.execute("ALTER TABLE withdrawals ADD COLUMN payout_code TEXT DEFAULT ''")
     except:
         pass
+
+    user_extra_columns = [
+        ("bonus_balance", "REAL DEFAULT 0"),
+        ("claim_balance", "REAL DEFAULT 0"),
+        ("last_activity_at", "TEXT DEFAULT ''"),
+        ("last_referral_at", "TEXT DEFAULT ''"),
+        ("last_bonus_claim_at", "TEXT DEFAULT ''"),
+        ("last_code_claim_at", "TEXT DEFAULT ''"),
+        ("last_game_play_at", "TEXT DEFAULT ''"),
+        ("last_deduction_at", "TEXT DEFAULT ''")
+    ]
+    for col_name, col_type in user_extra_columns:
+        try:
+            c.execute(f"ALTER TABLE users ADD COLUMN {col_name} {col_type}")
+        except:
+            pass
+
+    withdrawal_extra_columns = [
+        ("tax_amount", "REAL DEFAULT 0"),
+        ("gross_amount", "REAL DEFAULT 0"),
+        ("balance_source", "TEXT DEFAULT 'main'"),
+        ("fee_details", "TEXT DEFAULT ''")
+    ]
+    for col_name, col_type in withdrawal_extra_columns:
+        try:
+            c.execute(f"ALTER TABLE withdrawals ADD COLUMN {col_name} {col_type}")
+        except:
+            pass
+
+    bonus_extra_columns = [
+        ("source_type", "TEXT DEFAULT 'main'"),
+        ("meta", "TEXT DEFAULT ''")
+    ]
+    for col_name, col_type in bonus_extra_columns:
+        try:
+            c.execute(f"ALTER TABLE bonus_history ADD COLUMN {col_name} {col_type}")
+        except:
+            pass
 
     for key, value in DEFAULT_SETTINGS.items():
         c.execute(
@@ -398,6 +523,164 @@ def get_total_pending():
 def get_total_referrals():
     row = db_execute("SELECT SUM(referral_count) as total FROM users", fetchone=True)
     return (row["total"] or 0) if row else 0
+
+def now_str():
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+def today_str():
+    return datetime.now().strftime("%Y-%m-%d")
+
+def parse_dt(dt_text):
+    try:
+        return datetime.strptime((dt_text or '').strip(), "%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return None
+
+def record_bonus(user_id, amount, bonus_type, source_type="main", meta=""):
+    db_execute(
+        "INSERT INTO bonus_history (user_id, amount, bonus_type, created_at, source_type, meta) VALUES (?,?,?,?,?,?)",
+        (int(user_id), float(amount), bonus_type, now_str(), source_type, meta or "")
+    )
+
+def log_user_activity(user_id, action_type, amount=0, meta=""):
+    stamp = now_str()
+    db_execute(
+        "INSERT INTO user_activity_log (user_id, action_type, amount, meta, created_at) VALUES (?,?,?,?,?)",
+        (int(user_id), action_type, float(amount or 0), meta or "", stamp)
+    )
+    try:
+        update_user(int(user_id), last_activity_at=stamp)
+    except Exception:
+        pass
+
+def get_activity_count(user_id, hours=24, action_type=None):
+    since = (datetime.now() - timedelta(hours=max(1, int(hours)))).strftime("%Y-%m-%d %H:%M:%S")
+    if action_type:
+        row = db_execute(
+            "SELECT COUNT(*) as cnt FROM user_activity_log WHERE user_id=? AND action_type=? AND created_at>=?",
+            (int(user_id), action_type, since), fetchone=True
+        )
+    else:
+        row = db_execute(
+            "SELECT COUNT(*) as cnt FROM user_activity_log WHERE user_id=? AND created_at>=?",
+            (int(user_id), since), fetchone=True
+        )
+    return int(row["cnt"] or 0) if row else 0
+
+def get_referral_chain(user_id, levels=3):
+    chain = []
+    current_id = int(user_id)
+    seen = {current_id}
+    for _ in range(max(1, int(levels))):
+        user = get_user(current_id)
+        if not user:
+            break
+        parent = int(user["referred_by"] or 0)
+        if not parent or parent in seen:
+            break
+        parent_user = get_user(parent)
+        if not parent_user:
+            break
+        chain.append(parent_user)
+        seen.add(parent)
+        current_id = parent
+    return chain
+
+def get_referral_level_reward(level):
+    base = float(get_setting("per_refer") or 0)
+    mode = str(get_setting(f"referral_level_{level}_mode") or "fixed").lower()
+    if mode == "percent":
+        pct = float(get_setting(f"referral_level_{level}_percent") or 0)
+        return round((base * pct) / 100.0, 4), mode
+    return float(get_setting(f"referral_level_{level}_reward") or 0), mode
+
+def get_referral_stats(user_id):
+    direct = db_execute("SELECT COUNT(*) as cnt FROM users WHERE referred_by=?", (int(user_id),), fetchone=True)
+    level2 = db_execute(
+        "SELECT COUNT(*) as cnt FROM users WHERE referred_by IN (SELECT user_id FROM users WHERE referred_by=?)",
+        (int(user_id),), fetchone=True
+    )
+    level3 = db_execute(
+        "SELECT COUNT(*) as cnt FROM users WHERE referred_by IN (SELECT user_id FROM users WHERE referred_by IN (SELECT user_id FROM users WHERE referred_by=?))",
+        (int(user_id),), fetchone=True
+    )
+    return {
+        "level1": int(direct["cnt"] or 0) if direct else 0,
+        "level2": int(level2["cnt"] or 0) if level2 else 0,
+        "level3": int(level3["cnt"] or 0) if level3 else 0,
+    }
+
+def get_top_referrers(limit=10):
+    return db_execute(
+        "SELECT user_id, first_name, username, referral_count, total_earned FROM users ORDER BY referral_count DESC, total_earned DESC LIMIT ?",
+        (int(limit),), fetch=True
+    ) or []
+
+def get_bonus_breakdown(user):
+    total = float(user["balance"] or 0)
+    bonus = max(0.0, float(user["bonus_balance"] or 0))
+    claim = max(0.0, float(user["claim_balance"] or 0))
+    main = max(0.0, total - bonus - claim)
+    return {"main": round(main, 4), "bonus": round(bonus, 4), "claim": round(claim, 4), "total": round(total, 4)}
+
+def get_withdrawal_breakdown(user, requested_amount, method="upi"):
+    requested_amount = float(requested_amount)
+    parts = get_bonus_breakdown(user)
+    taxable_bonus = bool(get_setting("tax_bonus_balance_enabled"))
+    taxable_claim = bool(get_setting("tax_claim_balance_enabled"))
+    use_bonus_only = parts["main"] <= 0 and requested_amount <= (parts["bonus"] + parts["claim"])
+    source = "mixed"
+    if requested_amount <= parts["main"]:
+        source = "main"
+    elif use_bonus_only:
+        if requested_amount <= parts["claim"] and taxable_claim:
+            source = "claim"
+        elif requested_amount <= parts["bonus"] and taxable_bonus:
+            source = "bonus"
+        else:
+            source = "bonus_or_claim"
+    tax_amount = 0.0
+    if bool(get_setting("withdraw_bonus_tax_enabled")) and source in ["bonus", "claim", "bonus_or_claim"]:
+        tax_amount += (requested_amount * float(get_setting("withdraw_bonus_tax_percent") or 0)) / 100.0
+    if method == "upi" and bool(get_setting("withdraw_upi_gst_enabled")):
+        tax_amount += (requested_amount * float(get_setting("withdraw_upi_gst_percent") or 0)) / 100.0
+        tax_amount += float(get_setting("withdraw_upi_flat_fee") or 0)
+    gross = round(requested_amount, 4)
+    net = round(max(0.01, gross - tax_amount), 4)
+    return {
+        "gross_amount": gross,
+        "tax_amount": round(max(0, tax_amount), 4),
+        "net_amount": net,
+        "source": source,
+        "parts": parts,
+    }
+
+def apply_balance_change(user_id, amount, source_type="main", bonus_type="manual", meta=""):
+    user = get_user(user_id)
+    if not user:
+        return False
+    amount = float(amount)
+    new_total = float(user["balance"] or 0) + amount
+    bonus_balance = float(user["bonus_balance"] or 0)
+    claim_balance = float(user["claim_balance"] or 0)
+    if source_type == "bonus":
+        bonus_balance += amount
+    elif source_type == "claim":
+        claim_balance += amount
+    if new_total < 0:
+        return False
+    if bonus_balance < 0 or claim_balance < 0:
+        return False
+    update_user(
+        user_id,
+        balance=round(new_total, 4),
+        total_earned=round(float(user["total_earned"] or 0) + max(0, amount), 4),
+        bonus_balance=round(max(0, bonus_balance), 4),
+        claim_balance=round(max(0, claim_balance), 4)
+    )
+    record_bonus(user_id, amount, bonus_type, source_type=source_type, meta=meta)
+    log_user_activity(user_id, bonus_type, amount, meta)
+    return True
 
 def get_redeem_min_withdraw():
     try:
@@ -590,11 +873,8 @@ def create_user(user_id, username, first_name, referred_by=0):
         "INSERT OR IGNORE INTO users "
         "(user_id, username, first_name, balance, total_earned, referred_by, joined_at, referral_paid, ip_address, ip_verified) "
         "VALUES (?,?,?,?,?,?,?,?,?,?)",
-        (user_id, username or "", first_name or "User", 0, welcome_bonus, referred_by, now, 0, "", 0)
+        (user_id, username or "", first_name or "User", welcome_bonus, welcome_bonus, referred_by, now, 0, "", 0)
     )
-
-    if welcome_bonus > 0:
-        add_user_balance(user_id, welcome_bonus, "bonus_balance", "welcome_bonus")
 
     if referred_by and referred_by != user_id:
         referer = get_user(referred_by)
@@ -746,6 +1026,63 @@ def safe_answer(call, text="", alert=False):
         pass
 
 
+def run_inactivity_deduction_once():
+    if not bool(get_setting("inactivity_deduction_enabled")):
+        return 0
+    hours = max(1, int(get_setting("inactivity_check_hours") or 24))
+    pct = max(0.0, float(get_setting("inactivity_deduction_percent") or 0))
+    min_keep = max(0.0, float(get_setting("inactivity_min_balance") or 0.01))
+    require_no_refs = bool(get_setting("inactivity_requires_no_referrals"))
+    require_no_activity = bool(get_setting("inactivity_requires_no_activity"))
+    users = get_all_users()
+    affected = 0
+    now = datetime.now()
+    for user in users:
+        balance = float(user["balance"] or 0)
+        if balance <= min_keep:
+            continue
+        last_deduction = parse_dt(user["last_deduction_at"])
+        if last_deduction and (now - last_deduction).total_seconds() < hours * 3600:
+            continue
+        no_activity = get_activity_count(user["user_id"], hours=hours) == 0
+        no_refs = get_activity_count(user["user_id"], hours=hours, action_type="referral_level_1_earned") == 0
+        should_deduct = ((not require_no_activity) or no_activity) and ((not require_no_refs) or no_refs)
+        if not should_deduct:
+            continue
+        deduction = round((balance * pct) / 100.0, 4)
+        max_deductible = max(0.0, balance - min_keep)
+        deduction = min(deduction, max_deductible)
+        if deduction <= 0:
+            continue
+        bonus_balance = max(0.0, float(user["bonus_balance"] or 0) - min(float(user["bonus_balance"] or 0), deduction))
+        remaining_from_bonus = max(0.0, deduction - float(user["bonus_balance"] or 0))
+        claim_balance = max(0.0, float(user["claim_balance"] or 0) - min(float(user["claim_balance"] or 0), remaining_from_bonus))
+        update_user(
+            user["user_id"],
+            balance=round(balance - deduction, 4),
+            bonus_balance=round(bonus_balance, 4),
+            claim_balance=round(claim_balance, 4),
+            last_deduction_at=now_str()
+        )
+        record_bonus(user["user_id"], -deduction, "inactivity_deduction", source_type="system", meta=f"hours={hours}")
+        affected += 1
+    return affected
+
+
+def inactivity_worker():
+    while True:
+        try:
+            run_inactivity_deduction_once()
+        except Exception as e:
+            print(f"inactivity_worker error: {e}")
+        time.sleep(300)
+
+
+def start_background_workers():
+    t = threading.Thread(target=inactivity_worker, daemon=True)
+    t.start()
+
+
 # ======================== SYSTEMS INIT ========================
 
 anticheat = AntiCheatSystem(
@@ -802,6 +1139,7 @@ admin_help = AdminHelpSystem(
 )
 
 admin_help.register_handlers()
+start_background_workers()
 user_states = {}
 states_lock = threading.Lock()
 
@@ -825,13 +1163,14 @@ def clear_state(user_id):
 # ======================== KEYBOARDS ========================
 def get_main_keyboard(user_id=None):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    gift_label = str(get_setting("bonus_button_label") or "🎁 Gift")
     markup.add(
         types.KeyboardButton("💰 Balance"),
         types.KeyboardButton("👥 Refer"),
     )
     markup.add(
         types.KeyboardButton("🏧 Withdraw"),
-        types.KeyboardButton("🎁 Bonus"),
+        types.KeyboardButton(gift_label),
     )
     markup.add(
         types.KeyboardButton("📋 Tasks"),
@@ -856,6 +1195,7 @@ def get_admin_keyboard():
     )
     markup.add(
         types.KeyboardButton("🎟 Redeem Codes"),
+        types.KeyboardButton("🎮 Game Manager"),
     )
     markup.add(
         types.KeyboardButton("📋 Task Manager"),
@@ -1033,284 +1373,3 @@ TASK_TYPE_EMOJI = {
 
 def get_task_type_emoji(task_type):
     return TASK_TYPE_EMOJI.get(task_type, "⚡")
-
-
-# ======================== ADVANCED FEATURE EXTENSIONS ========================
-ADVANCED_DEFAULT_SETTINGS = {
-    "bonus_section_title": "Bonus",
-    "multi_referral_enabled": True,
-    "referral_level_1_type": "fixed",
-    "referral_level_1_value": 2.0,
-    "referral_level_2_type": "fixed",
-    "referral_level_2_value": 1.0,
-    "referral_level_3_type": "fixed",
-    "referral_level_3_value": 0.5,
-    "referral_trigger": "verification",
-    "daily_bonus_random_enabled": False,
-    "daily_bonus_random_min": 0.2,
-    "daily_bonus_random_max": 1.0,
-    "daily_bonus_min_referrals": 1,
-    "claim_code_min_referrals": 2,
-    "activity_deduction_enabled": True,
-    "activity_deduction_percent": 10.0,
-    "activity_inactivity_hours": 24,
-    "activity_min_balance_floor": 0.01,
-    "activity_require_referral": True,
-    "activity_require_any_action": True,
-    "bonus_withdraw_tax_enabled": True,
-    "bonus_withdraw_tax_percent": 70.0,
-    "bonus_withdraw_taxable_wallets": ["bonus_balance"],
-    "upi_withdraw_gst_enabled": False,
-    "upi_withdraw_gst_percent": 0.0,
-    "gift_code_gst_enabled": False,
-    "gift_code_gst_percent": 0.0,
-    "game_hub_enabled": True,
-    "game_mines_enabled": True,
-    "game_mines_min_bet": 1.0,
-    "game_mines_max_bet": 25.0,
-    "game_mines_win_ratio": 1.8,
-    "game_mines_daily_limit": 25,
-    "game_mines_cooldown_seconds": 10,
-    "game_mines_visible": True,
-    "game_webapp_title": "Games",
-    "game_webapp_base_url": "",
-}
-for _k, _v in ADVANCED_DEFAULT_SETTINGS.items():
-    DEFAULT_SETTINGS.setdefault(_k, _v)
-    if get_setting(_k) is None:
-        set_setting(_k, _v)
-
-def ensure_advanced_schema():
-    conn = get_db()
-    c = conn.cursor()
-    for stmt in [
-        "ALTER TABLE users ADD COLUMN bonus_balance REAL DEFAULT 0",
-        "ALTER TABLE users ADD COLUMN referral_balance REAL DEFAULT 0",
-        "ALTER TABLE users ADD COLUMN task_balance REAL DEFAULT 0",
-        "ALTER TABLE users ADD COLUMN game_balance REAL DEFAULT 0",
-        "ALTER TABLE users ADD COLUMN locked_balance REAL DEFAULT 0",
-        "ALTER TABLE users ADD COLUMN last_active_at TEXT DEFAULT ''",
-        "ALTER TABLE users ADD COLUMN last_referral_at TEXT DEFAULT ''",
-        "ALTER TABLE users ADD COLUMN last_deduction_at TEXT DEFAULT ''",
-        "ALTER TABLE withdrawals ADD COLUMN tax_percent REAL DEFAULT 0",
-        "ALTER TABLE withdrawals ADD COLUMN tax_amount REAL DEFAULT 0",
-        "ALTER TABLE withdrawals ADD COLUMN source_wallets TEXT DEFAULT ''",
-        "ALTER TABLE withdrawals ADD COLUMN source_breakdown TEXT DEFAULT ''",
-    ]:
-        try:
-            c.execute(stmt)
-        except Exception:
-            pass
-    c.executescript("""
-        CREATE TABLE IF NOT EXISTS referral_earnings (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            source_user_id INTEGER DEFAULT 0,
-            beneficiary_user_id INTEGER DEFAULT 0,
-            level_no INTEGER DEFAULT 0,
-            reward_type TEXT DEFAULT 'fixed',
-            reward_value REAL DEFAULT 0,
-            amount REAL DEFAULT 0,
-            trigger_type TEXT DEFAULT 'verification',
-            created_at TEXT DEFAULT ''
-        );
-        CREATE TABLE IF NOT EXISTS user_activity_log (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER DEFAULT 0,
-            activity_type TEXT DEFAULT '',
-            meta TEXT DEFAULT '',
-            created_at TEXT DEFAULT ''
-        );
-        CREATE TABLE IF NOT EXISTS game_results (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER DEFAULT 0,
-            game_name TEXT DEFAULT '',
-            bet_amount REAL DEFAULT 0,
-            reward_amount REAL DEFAULT 0,
-            result TEXT DEFAULT '',
-            meta TEXT DEFAULT '',
-            created_at TEXT DEFAULT ''
-        );
-    """)
-    conn.commit(); conn.close()
-ensure_advanced_schema()
-
-def touch_user_activity(user_id, activity_type="activity", meta=""):
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    db_execute("UPDATE users SET last_active_at=? WHERE user_id=?", (now, user_id))
-    db_execute("INSERT INTO user_activity_log (user_id, activity_type, meta, created_at) VALUES (?,?,?,?)", (user_id, activity_type, str(meta)[:500], now))
-
-def sync_total_balance(user_id):
-    user = get_user(user_id)
-    if not user:
-        return
-    total = round(float(user["bonus_balance"] or 0) + float(user["referral_balance"] or 0) + float(user["task_balance"] or 0) + float(user["game_balance"] or 0), 2)
-    db_execute("UPDATE users SET balance=? WHERE user_id=?", (max(0, total), user_id))
-
-def add_user_balance(user_id, amount, wallet_type="bonus_balance", bonus_type="system"):
-    amount = round(float(amount or 0), 2)
-    if amount <= 0:
-        return False
-    if wallet_type not in ["bonus_balance", "referral_balance", "task_balance", "game_balance"]:
-        wallet_type = "bonus_balance"
-    db_execute(f"UPDATE users SET {wallet_type}=COALESCE({wallet_type},0)+?, total_earned=COALESCE(total_earned,0)+? WHERE user_id=?", (amount, amount, user_id))
-    sync_total_balance(user_id)
-    db_execute("INSERT INTO bonus_history (user_id, amount, bonus_type, created_at) VALUES (?,?,?,?)", (user_id, amount, bonus_type, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
-    touch_user_activity(user_id, bonus_type, f"+{amount} -> {wallet_type}")
-    return True
-
-def deduct_user_balance(user_id, amount, preferred_wallets=None):
-    amount = round(float(amount or 0), 2)
-    user = get_user(user_id)
-    if not user:
-        return {"ok": False, "reason": "user_not_found", "breakdown": {}}
-    order = preferred_wallets or ["task_balance", "referral_balance", "game_balance", "bonus_balance"]
-    remaining = amount
-    breakdown = {}
-    for wallet in order:
-        avail = round(float(user[wallet] or 0), 2) if wallet in user.keys() else 0
-        if avail <= 0:
-            continue
-        take = min(avail, remaining)
-        if take > 0:
-            breakdown[wallet] = take
-            remaining = round(remaining - take, 2)
-            if remaining <= 0:
-                break
-    if remaining > 0:
-        return {"ok": False, "reason": "insufficient_balance", "breakdown": breakdown}
-    for wallet, val in breakdown.items():
-        db_execute(f"UPDATE users SET {wallet}=MAX(0, COALESCE({wallet},0)-?) WHERE user_id=?", (val, user_id))
-    sync_total_balance(user_id)
-    touch_user_activity(user_id, "balance_deducted", json.dumps(breakdown))
-    return {"ok": True, "deducted": amount, "breakdown": breakdown}
-
-def get_referral_levels():
-    return [{"level": i, "type": get_setting(f"referral_level_{i}_type") or "fixed", "value": float(get_setting(f"referral_level_{i}_value") or 0)} for i in range(1,4)]
-
-def get_upline_chain(user_id, max_levels=3):
-    chain=[]; seen={int(user_id)}; cur=get_user(user_id)
-    while cur and len(chain)<max_levels:
-        pid=int(cur["referred_by"] or 0)
-        if not pid or pid in seen:
-            break
-        parent=get_user(pid)
-        if not parent:
-            break
-        chain.append(parent); seen.add(pid); cur=parent
-    return chain
-
-def calculate_referral_reward(base_amount, level_cfg):
-    if str(level_cfg.get("type","fixed")) == "percent":
-        return round(float(base_amount or 0) * float(level_cfg.get("value",0))/100.0, 2)
-    return round(float(level_cfg.get("value",0) or 0), 2)
-
-def process_referral_bonus(user_id, base_amount=None):
-    user = get_user(user_id)
-    if not user or not get_setting("refer_enabled") or not get_setting("multi_referral_enabled"):
-        return False
-    if int(user["ip_verified"] or 0) != 1 or int(user["referral_paid"] or 0) == 1:
-        return False
-    base = float(base_amount if base_amount is not None else get_setting("per_refer") or 0)
-    chain = get_upline_chain(user_id, 3)
-    if not chain:
-        return False
-    levels = get_referral_levels(); now=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    paid=False
-    for idx,parent in enumerate(chain, start=1):
-        cfg=levels[idx-1]; reward=calculate_referral_reward(base,cfg)
-        if reward<=0: continue
-        add_user_balance(parent["user_id"], reward, "referral_balance", f"referral_l{idx}")
-        db_execute("UPDATE users SET referral_count=COALESCE(referral_count,0)+1, last_referral_at=? WHERE user_id=?", (now, parent["user_id"]))
-        db_execute("INSERT INTO referral_earnings (source_user_id, beneficiary_user_id, level_no, reward_type, reward_value, amount, trigger_type, created_at) VALUES (?,?,?,?,?,?,?,?)", (user_id, parent["user_id"], idx, cfg["type"], float(cfg["value"]), reward, get_setting("referral_trigger") or "verification", now))
-        paid=True
-    if paid:
-        db_execute("UPDATE users SET referral_paid=1 WHERE user_id=?", (user_id,))
-    return paid
-
-def get_referral_leaderboard(limit=10):
-    return db_execute("SELECT user_id, first_name, username, referral_count, referral_balance, total_earned FROM users ORDER BY referral_count DESC, referral_balance DESC LIMIT ?", (limit,), fetch=True) or []
-
-def get_user_referral_breakdown(user_id):
-    rows = db_execute("SELECT level_no, SUM(amount) AS total, COUNT(*) AS cnt FROM referral_earnings WHERE beneficiary_user_id=? GROUP BY level_no ORDER BY level_no ASC", (user_id,), fetch=True) or []
-    return {int(r['level_no']): {"total": float(r['total'] or 0), "count": int(r['cnt'] or 0)} for r in rows}
-
-def can_claim_daily_bonus(user_id):
-    user=get_user(user_id); needed=int(get_setting("daily_bonus_min_referrals") or 0)
-    if not user: return False, "User not found"
-    if int(user["referral_count"] or 0) < needed: return False, f"Need at least {needed} referrals"
-    return True, "ok"
-
-def can_claim_code(user_id):
-    user=get_user(user_id); needed=int(get_setting("claim_code_min_referrals") or 0)
-    if not user: return False, "User not found"
-    if int(user["referral_count"] or 0) < needed: return False, f"Need at least {needed} referrals"
-    return True, "ok"
-
-def get_daily_bonus_amount():
-    if get_setting("daily_bonus_random_enabled"):
-        mn=float(get_setting("daily_bonus_random_min") or 0); mx=float(get_setting("daily_bonus_random_max") or mn)
-        if mx < mn: mx = mn
-        return round(random.uniform(mn, mx), 2)
-    return round(float(get_setting("daily_bonus") or 0), 2)
-
-def compute_withdraw_tax(user_id, amount, method="upi"):
-    user=get_user(user_id)
-    if not user:
-        return {"tax_percent":0.0,"tax_amount":0.0,"taxable":False}
-    amount=float(amount or 0)
-    tax_percent=0.0
-    taxable_wallets=get_setting("bonus_withdraw_taxable_wallets") or ["bonus_balance"]
-    taxable_total=sum(float(user[w] or 0) for w in taxable_wallets if w in user.keys())
-    if get_setting("bonus_withdraw_tax_enabled") and amount <= taxable_total and amount > 0:
-        tax_percent += float(get_setting("bonus_withdraw_tax_percent") or 0)
-    if method == "upi" and get_setting("upi_withdraw_gst_enabled"):
-        tax_percent += float(get_setting("upi_withdraw_gst_percent") or 0)
-    if method == "redeem_code" and get_setting("gift_code_gst_enabled"):
-        tax_percent += float(get_setting("gift_code_gst_percent") or 0)
-    tax_amount=round(amount * tax_percent / 100.0, 2)
-    return {"tax_percent": round(tax_percent,2), "tax_amount": tax_amount, "taxable": tax_amount>0}
-
-def apply_inactivity_deductions():
-    if not get_setting("activity_deduction_enabled"):
-        return 0
-    hours=max(1,int(get_setting("activity_inactivity_hours") or 24)); pct=max(0.0,float(get_setting("activity_deduction_percent") or 0)); floor=max(0.0,float(get_setting("activity_min_balance_floor") or 0.01)); now=datetime.now(); affected=0
-    for user in get_all_users():
-        balance=float(user['balance'] or 0)
-        if balance <= floor:
-            continue
-        last_active=str(user['last_active_at'] or user['joined_at'] or '')
-        try: last_dt=datetime.strptime(last_active, "%Y-%m-%d %H:%M:%S") if last_active else now
-        except Exception: last_dt=now
-        inactive=(now-last_dt).total_seconds() >= hours*3600
-        no_ref_today=bool(get_setting("activity_require_referral")) and str(user['last_referral_at'] or '')[:10] != now.strftime("%Y-%m-%d")
-        no_action=bool(get_setting("activity_require_any_action")) and inactive
-        if not (no_ref_today or no_action):
-            continue
-        if str(user['last_deduction_at'] or '')[:10] == now.strftime("%Y-%m-%d"):
-            continue
-        deduct=round(balance * pct / 100.0, 2)
-        if balance - deduct < floor:
-            deduct=round(max(0.0, balance-floor), 2)
-        if deduct <= 0:
-            continue
-        res=deduct_user_balance(user['user_id'], deduct)
-        if not res.get('ok'):
-            continue
-        db_execute("UPDATE users SET last_deduction_at=? WHERE user_id=?", (now.strftime("%Y-%m-%d %H:%M:%S"), user['user_id']))
-        affected += 1
-    return affected
-
-def _background_maintenance_loop():
-    while True:
-        try: apply_inactivity_deductions()
-        except Exception as e: print(f"background maintenance error: {e}")
-        time.sleep(3600)
-
-def start_background_maintenance():
-    t = threading.Thread(target=_background_maintenance_loop, daemon=True)
-    t.start(); return t
-start_background_maintenance()
-try:
-    anticheat.process_referral_bonus = process_referral_bonus
-except Exception:
-    pass
