@@ -27,24 +27,11 @@ def confirm_withdraw_cb(call):
         safe_send(call.message.chat.id, reason)
         return
 
-    calc = get_withdrawal_breakdown(user, amount, method="upi")
-    parts = calc["parts"]
-    remaining = amount
-    bonus_balance = float(user["bonus_balance"] or 0)
-    claim_balance = float(user["claim_balance"] or 0)
-    if calc["source"] in ["bonus", "bonus_or_claim", "mixed"] and bonus_balance > 0:
-        used_bonus = min(bonus_balance, remaining)
-        bonus_balance -= used_bonus
-        remaining -= used_bonus
-    if calc["source"] in ["claim", "bonus_or_claim", "mixed"] and claim_balance > 0 and remaining > 0:
-        used_claim = min(claim_balance, remaining)
-        claim_balance -= used_claim
-        remaining -= used_claim
-    update_user(user_id, balance=round(float(user["balance"] or 0) - amount, 4), bonus_balance=round(bonus_balance, 4), claim_balance=round(claim_balance, 4))
+    update_user(user_id, balance=user["balance"] - amount)
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     w_id = db_lastrowid(
-        "INSERT INTO withdrawals (user_id, amount, upi_id, status, created_at, gst_amount, tax_amount, net_amount, gross_amount, balance_source, fee_details) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-        (user_id, calc["gross_amount"], upi_id, "pending", now, calc["tax_amount"], calc["tax_amount"], calc["net_amount"], calc["gross_amount"], calc["source"], json.dumps(calc))
+        "INSERT INTO withdrawals (user_id, amount, upi_id, status, created_at) VALUES (?,?,?,?,?)",
+        (user_id, amount, upi_id, "pending", now)
     )
 
     safe_answer(call, "✅ Withdrawal request submitted!")
@@ -107,11 +94,10 @@ def admin_approve(call):
     txn = generate_txn_id()
     db_execute("UPDATE withdrawals SET status='approved', processed_at=?, txn_id=? WHERE id=?", (now, txn, w_id))
     uid = wd["user_id"]
-    amt = float(wd["amount"] or 0)
-    net_amt = float(wd["net_amount"] or amt)
+    amt = wd["amount"]
     u = get_user(uid)
     if u:
-        update_user(uid, total_withdrawn=float(u["total_withdrawn"] or 0) + net_amt)
+        update_user(uid, total_withdrawn=u["total_withdrawn"] + amt)
     log_admin_action(call.from_user.id, "approve_withdrawal", f"Approved WD #{w_id} ₹{amt} for {uid}")
     safe_answer(call, "✅ Approved!")
     try:
@@ -134,7 +120,7 @@ def admin_approve(call):
         )
     except:
         pass
-    send_public_withdrawal_notification(uid, float(wd["net_amount"] or amt), wd["upi_id"], "approved", txn)
+    send_public_withdrawal_notification(uid, amt, wd["upi_id"], "approved", txn)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("rejct|"))
 def admin_reject(call):
@@ -157,9 +143,9 @@ def admin_reject(call):
     db_execute("UPDATE withdrawals SET status='rejected', processed_at=? WHERE id=?", (now, w_id))
     uid = wd["user_id"]
     amt = wd["amount"]
-    u = get_user(uid)
-    if u:
-        update_user(uid, balance=u["balance"] + amt)
+    refund_total = round(float(wd["amount"] or 0) + float(wd["tax_amount"] or 0), 2)
+    if refund_total > 0:
+        add_user_balance(uid, refund_total, "bonus_balance", "withdraw_refund")
     log_admin_action(call.from_user.id, "reject_withdrawal", f"Rejected WD #{w_id} ₹{amt} for {uid}")
     safe_answer(call, "❌ Rejected & Refunded!")
     try:

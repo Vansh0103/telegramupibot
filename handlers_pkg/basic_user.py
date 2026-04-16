@@ -260,6 +260,7 @@ def show_refer(chat_id, user_id, user):
         "📤 Share My Referral Link",
         url=f"https://t.me/share/url?url={refer_link}&text={share_msg}"
     ))
+    markup.add(types.InlineKeyboardButton("🏆 Referral Leaderboard", callback_data="refer_leaderboard"))
     text = (
         f"{pe('fire')} <b>Refer & Earn</b> {pe('fly_money')}\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -281,3 +282,16 @@ def show_refer(chat_id, user_id, user):
     )
     safe_send(chat_id, text, reply_markup=markup)
 
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "refer_leaderboard")
+def refer_leaderboard_cb(call):
+    safe_answer(call)
+    rows = get_referral_leaderboard(10)
+    if not rows:
+        safe_send(call.message.chat.id, f"{pe('info')} No referral data yet.")
+        return
+    text = f"{pe('trophy')} <b>Referral Leaderboard</b>\n━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    for idx, row in enumerate(rows, start=1):
+        text += f"{idx}. <b>{row['first_name']}</b> — {row['referral_count']} refs | ₹{float(row['referral_balance'] or 0):.2f}\n"
+    safe_send(call.message.chat.id, text)
