@@ -1,67 +1,7 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Mine Game</title>
-  <style>
-    body{font-family:Arial,sans-serif;background:#0f172a;color:#fff;margin:0;padding:24px}
-    .wrap{max-width:760px;margin:0 auto}.card{background:#1e293b;border-radius:18px;padding:20px;margin-bottom:18px}
-    .grid{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-top:14px}.cell{background:#334155;border:none;color:#fff;padding:18px;border-radius:12px;font-size:18px;cursor:pointer}
-    .row{display:flex;gap:10px;flex-wrap:wrap}.muted{opacity:.8}.primary{background:#22c55e;color:#062b16;border:none;padding:12px 16px;border-radius:12px;font-weight:bold;cursor:pointer}
-    input{padding:12px;border-radius:10px;border:none;min-width:120px}.history li{margin:8px 0}
-  </style>
-</head>
-<body>
-  <div class="wrap">
-    <div class="card">
-      <h2>💣 Mine Game</h2>
-      <p class="muted">Admin can change UI later by editing <code>templates/mine.html</code>.</p>
-      <div class="row">
-        <input id="bet" type="number" min="1" step="0.01" value="1" />
-        <button class="primary" onclick="startGame()">Start New Round</button>
-      </div>
-      <div id="status" style="margin-top:12px"></div>
-      <div class="grid" id="grid"></div>
-    </div>
-    <div class="card">
-      <h3>Recent History</h3>
-      <ul id="history" class="history"></ul>
-    </div>
-  </div>
-<script>
-let active=false;
-let finished=false;
-function renderGrid(){
-  const grid=document.getElementById('grid'); grid.innerHTML='';
-  for(let i=0;i<9;i++){
-    const b=document.createElement('button'); b.className='cell'; b.textContent='?';
-    b.onclick=()=>pick(i); grid.appendChild(b);
-  }
-}
-async function startGame(){
-  const bet=parseFloat(document.getElementById('bet').value||'0');
-  const r=await fetch('/api/games/mines/play',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({uid:new URLSearchParams(location.search).get('uid'),bet})});
-  const j=await r.json();
-  document.getElementById('status').innerHTML=j.message || j.error || 'Started';
-  active=!!j.ok; finished=false; if(active) renderGrid(); loadHistory();
-}
-async function pick(index){
-  if(!active || finished) return;
-  const r=await fetch('/api/games/mines/reveal',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({uid:new URLSearchParams(location.search).get('uid'),index})});
-  const j=await r.json();
-  document.getElementById('status').innerHTML=j.message || j.error || '';
-  if(j.finished){ finished=true; active=false; }
-  loadHistory();
-}
-async function loadHistory(){
-  const uid=new URLSearchParams(location.search).get('uid');
-  const r=await fetch('/api/games/history?uid='+encodeURIComponent(uid));
-  const j=await r.json();
-  const ul=document.getElementById('history'); ul.innerHTML='';
-  (j.items||[]).forEach(item=>{ const li=document.createElement('li'); li.textContent=`${item.created_at} | ${item.result} | bet ₹${item.bet_amount} | net ₹${item.net_change}`; ul.appendChild(li); });
-}
-loadHistory();
-</script>
-</body>
-</html>
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{{ site_name }} - Mine Game</title>
+<style>
+body{font-family:Arial,sans-serif;background:#0f172a;color:#fff;margin:0;padding:24px} .card{max-width:520px;margin:0 auto;background:#1e293b;border-radius:18px;padding:24px;box-shadow:0 14px 40px rgba(0,0,0,.35)} button{padding:12px 16px;border:0;border-radius:12px;background:#22c55e;color:#fff;font-weight:700;width:100%;margin-top:10px} input{width:100%;padding:12px;border-radius:10px;border:1px solid #334155;background:#0f172a;color:#fff} .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:16px}.tile{padding:18px;text-align:center;background:#334155;border-radius:12px}.muted{opacity:.8;font-size:14px}
+</style></head><body><div class="card"><h1>💣 Mine Game</h1><p class="muted">Admin can fully control this game from the panel. This file is in <code>templates/mine.html</code> so you can edit the UI later.</p><label>Bet Amount (₹)</label><input id="bet" type="number" min="1" step="0.01" placeholder="Enter amount"><div class="grid"><div class="tile">💎</div><div class="tile">💣</div><div class="tile">🎁</div></div><button onclick="play()">Play Mine Game</button><p id="result" class="muted"></p></div><script>
+async function play(){const params=new URLSearchParams(location.search);const user_id=params.get('user_id');const bet=parseFloat(document.getElementById('bet').value||'0');const res=await fetch('/api/games/mine/play',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id,bet})});const data=await res.json();document.getElementById('result').innerHTML=data.ok?`Result: <b>${data.win?'WIN':'LOSE'}</b><br>Bet: ₹${data.bet}<br>Reward: ₹${data.reward}<br>Balance: ₹${data.balance}`:data.message;}
+</script></body></html>

@@ -2,7 +2,7 @@ import os
 import logging
 from anticheat import create_verification_app
 from flask import render_template, request, jsonify
-import sqlite3, json, random
+import sqlite3, json, random, datetime
 
 # ================== CONFIG ==================
 
@@ -29,86 +29,6 @@ app = create_verification_app(
 )
 
 # ================== EXTRA ROUTES ==================
-
-
-def get_db_conn():
-    conn = sqlite3.connect(DB_PATH, timeout=30)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-@app.route("/games")
-def games_home():
-    return render_template("mine.html")
-
-@app.route("/games/mine")
-def mine_page():
-    return render_template("mine.html")
-
-@app.route("/api/games/history")
-def game_history_api():
-    uid = int(request.args.get("uid", "0") or 0)
-    conn = get_db_conn(); cur = conn.cursor()
-    cur.execute("SELECT created_at, result, bet_amount, net_change FROM game_results WHERE user_id=? ORDER BY id DESC LIMIT 20", (uid,))
-    items = [dict(r) for r in cur.fetchall()]
-    conn.close()
-    return jsonify({"items": items})
-
-@app.route("/api/games/mines/play", methods=["POST"])
-def mines_play():
-    data = request.get_json(force=True, silent=True) or {}
-    uid = int(data.get("uid", 0) or 0)
-    bet = round(float(data.get("bet", 0) or 0), 2)
-    if uid <= 0:
-        return jsonify({"ok": False, "error": "Invalid user"}), 400
-    conn = get_db_conn(); cur = conn.cursor()
-    cur.execute("SELECT value FROM settings WHERE key='games_config'")
-    row = cur.fetchone()
-    cfg = {"mines_enabled": True, "mines_min_bet": 1, "mines_max_bet": 25, "mines_win_ratio": 45, "mines_reward_multiplier": 1.8}
-    if row and row[0]:
-        try:
-            cfg.update(json.loads(row[0]))
-        except Exception:
-            pass
-    if not cfg.get("mines_enabled", True):
-        conn.close(); return jsonify({"ok": False, "error": "Game disabled by admin"}), 403
-    if bet < float(cfg.get("mines_min_bet", 1)) or bet > float(cfg.get("mines_max_bet", 25)):
-        conn.close(); return jsonify({"ok": False, "error": "Bet outside allowed limits"}), 400
-    cur.execute("SELECT balance FROM users WHERE user_id=?", (uid,))
-    user = cur.fetchone()
-    if not user or float(user[0] or 0) < bet:
-        conn.close(); return jsonify({"ok": False, "error": "Insufficient balance"}), 400
-    cur.execute("UPDATE users SET balance=balance-?, last_activity_at=datetime('now','localtime') WHERE user_id=?", (bet, uid))
-    cur.execute("INSERT INTO game_results (user_id, game_key, bet_amount, reward_amount, net_change, result, metadata, created_at) VALUES (?,?,?,?,?,?,?,datetime('now','localtime'))", (uid, 'mines', bet, 0, -bet, 'pending', json.dumps({"state":"started"})))
-    game_id = cur.lastrowid
-    conn.commit(); conn.close()
-    return jsonify({"ok": True, "game_id": game_id, "message": "Round started. Pick a tile."})
-
-@app.route("/api/games/mines/reveal", methods=["POST"])
-def mines_reveal():
-    data = request.get_json(force=True, silent=True) or {}
-    uid = int(data.get("uid", 0) or 0)
-    idx = int(data.get("index", 0) or 0)
-    conn = get_db_conn(); cur = conn.cursor()
-    cur.execute("SELECT id, bet_amount, result FROM game_results WHERE user_id=? AND game_key='mines' ORDER BY id DESC LIMIT 1", (uid,))
-    row = cur.fetchone()
-    if not row or row[2] != 'pending':
-        conn.close(); return jsonify({"ok": False, "error": "No active round"}), 400
-    cur.execute("SELECT value FROM settings WHERE key='games_config'")
-    cfg_row = cur.fetchone(); cfg = {"mines_win_ratio": 45, "mines_reward_multiplier": 1.8}
-    if cfg_row and cfg_row[0]:
-        try: cfg.update(json.loads(cfg_row[0]))
-        except Exception: pass
-    win = random.randint(1,100) <= int(cfg.get("mines_win_ratio",45))
-    bet = float(row[1] or 0)
-    reward = round(bet * float(cfg.get("mines_reward_multiplier", 1.8)), 2) if win else 0
-    net = round(reward if win else -bet, 2)
-    result = 'win' if win else 'loss'
-    cur.execute("UPDATE game_results SET reward_amount=?, net_change=?, result=?, metadata=? WHERE id=?", (reward, net, result, json.dumps({"pick":idx,"win":win}), row[0]))
-    if win:
-        cur.execute("UPDATE users SET balance=balance+?, total_earned=total_earned+?, last_activity_at=datetime('now','localtime') WHERE user_id=?", (reward, reward, uid))
-    conn.commit(); conn.close()
-    return jsonify({"ok": True, "finished": True, "result": result, "message": f"You {'won' if win else 'lost'}! {'Reward ₹'+str(reward) if win else 'Better luck next round.'}"})
-
 
 @app.route("/debug")
 def debug_info():
@@ -144,3 +64,69 @@ def server_error(e):
 if __name__ == "__main__":
     logging.info(f"🌐 Running on port {PORT}")
     app.run(host="0.0.0.0", port=PORT)
+
+
+
+def ws_get_db():
+    conn = sqlite3.connect(DB_PATH, timeout=30)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def ws_get_setting(key, default=None):
+    conn = ws_get_db(); cur = conn.cursor(); cur.execute("SELECT value FROM settings WHERE key=?", (key,)); row = cur.fetchone(); conn.close()
+    if not row:
+        return default
+    try:
+        return json.loads(row['value'])
+    except Exception:
+        return row['value']
+
+
+def ws_get_user(user_id):
+    conn = ws_get_db(); cur = conn.cursor(); cur.execute("SELECT * FROM users WHERE user_id=?", (user_id,)); row = cur.fetchone(); conn.close(); return row
+
+
+def ws_update_user_balance(user_id, delta, reward_type='game_reward'):
+    conn = ws_get_db(); cur = conn.cursor(); user = ws_get_user(user_id)
+    if not user:
+        return False
+    new_balance = max(0.0, float(user['balance'] or 0) + float(delta))
+    game_balance = float(user['game_balance'] or 0) + (float(delta) if delta > 0 else 0)
+    total_earned = float(user['total_earned'] or 0) + (float(delta) if delta > 0 else 0)
+    cur.execute("UPDATE users SET balance=?, game_balance=?, total_earned=?, last_active_at=? WHERE user_id=?", (new_balance, game_balance, total_earned, datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), user_id))
+    conn.commit(); conn.close(); return True
+
+
+@app.route('/games/mine')
+def mine_game_page():
+    return render_template('mine.html', site_name=ws_get_setting('site_name', 'UPI Loot Pay'), user_id=request.args.get('user_id', ''))
+
+
+@app.route('/api/games/mine/play', methods=['POST'])
+def mine_game_play_api():
+    data = request.get_json(silent=True) or {}
+    user_id = int(data.get('user_id') or 0)
+    bet = float(data.get('bet') or 0)
+    if not ws_get_setting('games_enabled', True) or not ws_get_setting('mine_game_enabled', True):
+        return jsonify({'ok': False, 'message': 'Game disabled by admin'})
+    user = ws_get_user(user_id)
+    if not user:
+        return jsonify({'ok': False, 'message': 'User not found'})
+    if float(user['balance'] or 0) < bet:
+        return jsonify({'ok': False, 'message': 'Insufficient balance'})
+    min_bet = float(ws_get_setting('mine_game_min_bet', 1) or 1)
+    max_bet = float(ws_get_setting('mine_game_max_bet', 100) or 100)
+    if bet < min_bet or bet > max_bet:
+        return jsonify({'ok': False, 'message': f'Bet must be between ₹{min_bet} and ₹{max_bet}'})
+    conn = ws_get_db(); cur = conn.cursor()
+    cur.execute("UPDATE users SET balance=?, last_active_at=? WHERE user_id=?", (float(user['balance'] or 0)-bet, datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), user_id))
+    win = random.random() < float(ws_get_setting('mine_game_win_ratio', 0.55) or 0.55)
+    reward = round(bet * float(ws_get_setting('mine_game_reward_multiplier', 1.8) or 1.8), 2) if win else 0.0
+    if reward > 0:
+        user2 = ws_get_user(user_id)
+        cur.execute("UPDATE users SET balance=?, game_balance=?, total_earned=?, last_active_at=? WHERE user_id=?", (float(user2['balance'] or 0)+reward, float(user2['game_balance'] or 0)+reward, float(user2['total_earned'] or 0)+reward, datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), user_id))
+    cur.execute("INSERT INTO game_sessions (user_id, game_key, bet_amount, result, reward_amount, payload, created_at) VALUES (?,?,?,?,?,?,?)", (user_id, 'mine', bet, 'win' if win else 'lose', reward, json.dumps({'source':'web'}), datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+    conn.commit(); conn.close()
+    fresh = ws_get_user(user_id)
+    return jsonify({'ok': True, 'win': win, 'bet': bet, 'reward': reward, 'balance': float(fresh['balance'] or 0)})

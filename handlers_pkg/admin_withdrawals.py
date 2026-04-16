@@ -16,61 +16,58 @@ def confirm_withdraw_cb(call):
         safe_answer(call, "User not found!", True)
         return
 
-    bonus_balance = float(user["bonus_balance"] or 0)
-    tax_amount = 0
-    if get_setting("withdraw_bonus_tax_enabled") and amount <= bonus_balance:
-        tax_amount = round(amount * float(get_setting("withdraw_bonus_tax_percent") or 0) / 100.0, 2)
-    gst_amount = 0
-    if get_setting("upi_withdraw_gst_enabled"):
-        gst_amount = round(amount * float(get_setting("upi_withdraw_gst_percent") or 0) / 100.0, 2)
-    total_charge = round(amount + tax_amount + gst_amount, 2)
-
-    if total_charge > float(user["balance"] or 0):
+    if amount > user["balance"]:
         safe_answer(call, "❌ Insufficient balance!", True)
         return
 
+    # ✅ DAILY LIMIT FINAL CHECK YAHAN
     allowed, reason = withdraw_limit.can_user_withdraw(user_id)
     if not allowed:
         safe_answer(call, "❌ Daily limit reached!", True)
         safe_send(call.message.chat.id, reason)
         return
 
-    new_bonus_balance = round(max(0, bonus_balance - min(amount, bonus_balance)), 2)
-    update_user(user_id, balance=round(float(user["balance"] or 0) - total_charge, 2), bonus_balance=new_bonus_balance, last_activity_at=now_str())
-    now = now_str()
+    update_user(user_id, balance=user["balance"] - amount)
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     w_id = db_lastrowid(
-        "INSERT INTO withdrawals (user_id, amount, upi_id, status, created_at, gst_amount, tax_amount, net_amount, balance_type, method) VALUES (?,?,?,?,?,?,?,?,?,?)",
-        (user_id, amount, upi_id, "pending", now, gst_amount, tax_amount, amount, "bonus" if amount <= bonus_balance else "main", "upi")
+        "INSERT INTO withdrawals (user_id, amount, upi_id, status, created_at) VALUES (?,?,?,?,?)",
+        (user_id, amount, upi_id, "pending", now)
     )
 
     safe_answer(call, "✅ Withdrawal request submitted!")
     safe_edit(
-        call.message.chat.id,
-        call.message.message_id,
-        f"{pe('check')} <b>Withdrawal Submitted!</b>\n━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"{pe('fly_money')} <b>Payout Amount:</b> ₹{amount:.2f}\n"
-        f"{pe('money')} <b>Bonus Tax:</b> ₹{tax_amount:.2f}\n"
-        f"{pe('money')} <b>UPI GST:</b> ₹{gst_amount:.2f}\n"
-        f"{pe('chart_up')} <b>Total Deducted:</b> ₹{total_charge:.2f}\n"
+        call.message.chat.id, call.message.message_id,
+        f"{pe('check')} <b>Withdrawal Submitted!</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"{pe('fly_money')} <b>Amount:</b> ₹{amount}\n"
         f"{pe('link')} <b>UPI:</b> <code>{upi_id}</code>\n"
-        f"{pe('hourglass')} <b>Status:</b> Pending ⏳"
+        f"{pe('hourglass')} <b>Status:</b> Pending ⏳\n\n"
+        f"📋 <i>10% GST deducted for UPI Processing & Management</i>\n"
+        f"{pe('info')} Will be processed soon!\n"
+        f"{pe('bell')} You'll be notified.\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━"
     )
 
     try:
         admin_markup = types.InlineKeyboardMarkup(row_width=2)
-        admin_markup.add(types.InlineKeyboardButton("✅ Approve", callback_data=f"apprv|{w_id}"), types.InlineKeyboardButton("❌ Reject", callback_data=f"rejct|{w_id}"))
+        admin_markup.add(
+            types.InlineKeyboardButton("✅ Approve", callback_data=f"apprv|{w_id}"),
+            types.InlineKeyboardButton("❌ Reject", callback_data=f"rejct|{w_id}")
+        )
         admin_markup.add(types.InlineKeyboardButton("👤 User Info", callback_data=f"uinfo|{user_id}"))
         bot.send_message(
             ADMIN_ID,
-            f"{pe('siren')} <b>New Withdrawal!</b>\n━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"{pe('siren')} <b>New Withdrawal!</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
             f"{pe('info')} <b>ID:</b> #{w_id}\n"
             f"{pe('disguise')} <b>User:</b> {user['first_name']} (<code>{user_id}</code>)\n"
-            f"{pe('fly_money')} <b>Payout:</b> ₹{amount:.2f}\n"
-            f"{pe('money')} <b>Tax:</b> ₹{tax_amount:.2f} | <b>GST:</b> ₹{gst_amount:.2f}\n"
-            f"{pe('chart_up')} <b>Total Deducted:</b> ₹{total_charge:.2f}\n"
-            f"{pe('link')} <b>UPI:</b> <code>{upi_id}</code>",
+            f"{pe('fly_money')} <b>Amount:</b> ₹{amount}\n"
+            f"{pe('link')} <b>UPI:</b> <code>{upi_id}</code>\n"
+            f"{pe('money')} <b>Remaining:</b> ₹{user['balance'] - amount:.2f}\n"
+            f"{pe('thumbs_up')} <b>Referrals:</b> {user['referral_count']}\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━",
             parse_mode="HTML",
-            reply_markup=admin_markup,
+            reply_markup=admin_markup
         )
     except Exception as e:
         print(f"Admin notify error: {e}")
@@ -146,10 +143,9 @@ def admin_reject(call):
     db_execute("UPDATE withdrawals SET status='rejected', processed_at=? WHERE id=?", (now, w_id))
     uid = wd["user_id"]
     amt = wd["amount"]
-    refund_total = float(wd["amount"] or 0) + float(wd["tax_amount"] or 0) + float(wd["gst_amount"] or 0)
     u = get_user(uid)
     if u:
-        update_user(uid, balance=round(float(u["balance"] or 0) + refund_total, 2), bonus_balance=round(float(u["bonus_balance"] or 0) + (float(wd["amount"] or 0) if (wd["balance_type"] or '') == 'bonus' else 0), 2))
+        update_user(uid, balance=u["balance"] + amt)
     log_admin_action(call.from_user.id, "reject_withdrawal", f"Rejected WD #{w_id} ₹{amt} for {uid}")
     safe_answer(call, "❌ Rejected & Refunded!")
     try:

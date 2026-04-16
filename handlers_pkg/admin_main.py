@@ -583,11 +583,6 @@ def admin_settings(message):
     show_settings(message.chat.id)
 
 
-@bot.message_handler(func=lambda m: m.text == "🧠 Advanced Settings" and is_admin(m.from_user.id))
-def admin_advanced_settings(message):
-    show_advanced_settings(message.chat.id)
-
-
 def show_settings(chat_id):
     pr = get_setting("per_refer")
     mw = get_setting("min_withdraw")
@@ -599,62 +594,72 @@ def show_settings(chat_id):
     wd_en = get_setting("withdraw_enabled")
     rf_en = get_setting("refer_enabled")
     gf_en = get_setting("gift_enabled")
+    mn = get_setting("bot_maintenance")
     tk_en = get_setting("tasks_enabled")
-    ip_en = get_setting("ip_verification_enabled")
     markup = types.InlineKeyboardMarkup(row_width=2)
-    markup.add(types.InlineKeyboardButton(f"💰 Base Refer: ₹{pr}", callback_data="s_per_refer"), types.InlineKeyboardButton(f"📉 Min WD: ₹{mw}", callback_data="s_min_wd"))
-    markup.add(types.InlineKeyboardButton(f"🎉 Welcome: ₹{wb}", callback_data="s_welcome"), types.InlineKeyboardButton(f"🎁 Fixed Daily: ₹{db_val}", callback_data="s_daily"))
-    markup.add(types.InlineKeyboardButton(f"💳 Daily WD Limit: {mx}", callback_data="s_max_wd"), types.InlineKeyboardButton(f"⏰ Time: {ws}-{we}h", callback_data="s_wd_time"))
-    markup.add(types.InlineKeyboardButton(f"{'🟢' if wd_en else '🔴'} Withdraw", callback_data="tog_withdraw"), types.InlineKeyboardButton(f"{'🟢' if rf_en else '🔴'} Referral", callback_data="tog_refer"))
-    markup.add(types.InlineKeyboardButton(f"{'🟢' if gf_en else '🔴'} Bonus/Gift", callback_data="tog_gift"), types.InlineKeyboardButton(f"{'🟢' if tk_en else '🔴'} Tasks", callback_data="tog_tasks"))
-    markup.add(types.InlineKeyboardButton(f"{'🟢' if ip_en else '🔴'} IP Verify", callback_data="tog_ip_verify"), types.InlineKeyboardButton("🧠 Open Advanced Settings", callback_data="open_advanced_settings"))
-    markup.add(types.InlineKeyboardButton("🖼 Welcome Image", callback_data="s_welcome_img"), types.InlineKeyboardButton("🖼 Withdraw Image", callback_data="s_wd_img"))
-    markup.add(types.InlineKeyboardButton("🚫 Ban User", callback_data="s_ban"), types.InlineKeyboardButton("✅ Unban User", callback_data="s_unban"))
-    markup.add(types.InlineKeyboardButton("🔄 Reset User", callback_data="s_reset_user"), types.InlineKeyboardButton("👤 User Info", callback_data="dash_user_lookup"))
-    safe_send(
-        chat_id,
-        f"{pe('gear')} <b>Settings</b>\n"
-        f"Simple day-to-day controls for admin.\n\n"
-        f"<b>Withdraw:</b> {'Enabled' if wd_en else 'Disabled'} | Min ₹{mw} | Max/day {mx}\n"
-        f"<b>Referral:</b> {'Enabled' if rf_en else 'Disabled'} | Base ₹{pr}\n"
-        f"<b>Bonus:</b> {'Enabled' if gf_en else 'Disabled'} | Daily ₹{db_val}\n"
-        f"<b>Tasks:</b> {'Enabled' if tk_en else 'Disabled'} | <b>IP Verify:</b> {'On' if ip_en else 'Off'}",
-        reply_markup=markup
+    markup.add(
+        types.InlineKeyboardButton(f"💰 Per Refer: ₹{pr}", callback_data="s_per_refer"),
+        types.InlineKeyboardButton(f"📉 Min WD: ₹{mw}", callback_data="s_min_wd"),
     )
-
-
-def show_advanced_settings(chat_id):
-    ref_cfg = get_advanced_referral_settings()
-    act_cfg = get_activity_deduction_settings()
-    games_cfg = get_games_config()
-    bonus_tax = get_setting("withdraw_bonus_tax_percent")
-    upi_gst = get_setting("upi_withdraw_gst_percent")
-    daily_req = get_setting("daily_bonus_referrals_required")
-    code_req = get_setting("gift_code_claim_referrals_required")
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    markup.add(types.InlineKeyboardButton("🎰 Daily Range", callback_data="s_daily_range"), types.InlineKeyboardButton(f"🎯 Daily Req: {daily_req}", callback_data="s_daily_req"))
-    markup.add(types.InlineKeyboardButton(f"🎟 Code Req: {code_req}", callback_data="s_code_req"), types.InlineKeyboardButton(f"Inactivity: {act_cfg.get('deduction_percent')}%", callback_data="s_inactivity_pct"))
-    markup.add(types.InlineKeyboardButton(f"Inactivity Days: {act_cfg.get('inactivity_days')}", callback_data="s_inactivity_days"), types.InlineKeyboardButton(f"Bonus Tax: {bonus_tax}%", callback_data="s_bonus_tax"))
-    markup.add(types.InlineKeyboardButton(f"UPI GST: {upi_gst}%", callback_data="s_upi_gst"), types.InlineKeyboardButton(f"{'🟢' if games_cfg.get('hub_enabled') else '🔴'} Games", callback_data="tog_games"))
-    markup.add(types.InlineKeyboardButton(f"{'🟢' if get_setting('withdraw_bonus_tax_enabled') else '🔴'} Bonus Tax Rule", callback_data="tog_bonus_tax"), types.InlineKeyboardButton(f"{'🟢' if get_setting('upi_withdraw_gst_enabled') else '🔴'} UPI GST", callback_data="tog_upi_gst"))
-    markup.add(types.InlineKeyboardButton(f"{'🟢' if ref_cfg.get('enabled') else '🔴'} Multi Referral", callback_data="tog_multi_ref"), types.InlineKeyboardButton(f"{'🟢' if act_cfg.get('enabled') else '🔴'} Auto Deduction", callback_data="tog_inactivity"))
-    markup.add(types.InlineKeyboardButton("1️⃣ Level 1 Reward", callback_data="s_ref_level_1"), types.InlineKeyboardButton("2️⃣ Level 2 Reward", callback_data="s_ref_level_2"))
-    markup.add(types.InlineKeyboardButton("3️⃣ Level 3 Reward", callback_data="s_ref_level_3"), types.InlineKeyboardButton("📘 Reward Help", callback_data="s_ref_levels_help"))
-    markup.add(types.InlineKeyboardButton(f"{'🔴 Maintenance ON' if get_setting('bot_maintenance') else '🟢 Maintenance OFF'}", callback_data="tog_maintenance"))
-    markup.add(types.InlineKeyboardButton("💰 Add Balance", callback_data="s_add_bal"), types.InlineKeyboardButton("💸 Deduct Balance", callback_data="s_deduct_bal"))
-    markup.add(types.InlineKeyboardButton("🗑 RESET ALL DATA", callback_data="s_reset_all"))
-    l1 = f"{ref_cfg.get('level_1_value')}%" if str(ref_cfg.get('level_1_mode')).lower() == "percent" else f"₹{float(ref_cfg.get('level_1_value') or 0):.2f}"
-    l2 = f"{ref_cfg.get('level_2_value')}%" if str(ref_cfg.get('level_2_mode')).lower() == "percent" else f"₹{float(ref_cfg.get('level_2_value') or 0):.2f}"
-    l3 = f"{ref_cfg.get('level_3_value')}%" if str(ref_cfg.get('level_3_mode')).lower() == "percent" else f"₹{float(ref_cfg.get('level_3_value') or 0):.2f}"
+    markup.add(
+        types.InlineKeyboardButton(f"🎉 Welcome: ₹{wb}", callback_data="s_welcome"),
+        types.InlineKeyboardButton(f"📅 Daily: ₹{db_val}", callback_data="s_daily"),
+    )
+    markup.add(
+        types.InlineKeyboardButton(f"📈 Max WD: ₹{mx}", callback_data="s_max_wd"),
+        types.InlineKeyboardButton(f"⏰ Time: {ws}-{we}h", callback_data="s_wd_time"),
+    )
+    markup.add(
+        types.InlineKeyboardButton(f"{'🟢' if wd_en else '🔴'} Withdraw", callback_data="tog_withdraw"),
+        types.InlineKeyboardButton(f"{'🟢' if rf_en else '🔴'} Refer", callback_data="tog_refer"),
+    )
+    markup.add(
+        types.InlineKeyboardButton(f"{'🟢' if gf_en else '🔴'} Gift", callback_data="tog_gift"),
+        types.InlineKeyboardButton(f"{'🟢' if tk_en else '🔴'} Tasks", callback_data="tog_tasks"),
+    )
+    markup.add(
+        types.InlineKeyboardButton(
+            f"{'🔴 Maintenance ON' if mn else '🟢 Maintenance OFF'}",
+            callback_data="tog_maintenance"
+        ),
+    )
+    markup.add(
+        types.InlineKeyboardButton("🖼 Welcome Image", callback_data="s_welcome_img"),
+        types.InlineKeyboardButton("🖼 Withdraw Image", callback_data="s_wd_img"),
+    )
+    markup.add(
+        types.InlineKeyboardButton("👥 Referral Controls", callback_data="s_adv_referral"),
+        types.InlineKeyboardButton("🎁 Bonus Controls", callback_data="s_adv_bonus"),
+    )
+    markup.add(
+        types.InlineKeyboardButton("💸 Tax / GST", callback_data="s_adv_tax"),
+        types.InlineKeyboardButton("📉 Inactivity Rules", callback_data="s_adv_deduction"),
+    )
+    markup.add(
+        types.InlineKeyboardButton("🛡 IP Verification", callback_data="s_adv_ip"),
+        types.InlineKeyboardButton("🎮 Game Control", callback_data="adv_game_report"),
+    )
+    markup.add(
+        types.InlineKeyboardButton("🚫 Ban User", callback_data="s_ban"),
+        types.InlineKeyboardButton("✅ Unban User", callback_data="s_unban"),
+    )
+    markup.add(
+        types.InlineKeyboardButton("🔄 Reset User", callback_data="s_reset_user"),
+        types.InlineKeyboardButton("💰 Add Balance", callback_data="s_add_bal"),
+    )
+    markup.add(
+        types.InlineKeyboardButton("💸 Deduct Balance", callback_data="s_deduct_bal"),
+        types.InlineKeyboardButton("👤 User Info", callback_data="dash_user_lookup"),
+    )
+    markup.add(
+        types.InlineKeyboardButton("🗑 RESET ALL DATA", callback_data="s_reset_all"),
+    )
     safe_send(
         chat_id,
-        f"{pe('gear')} <b>Advanced Settings</b>\n"
-        f"Detailed controls for referrals, taxes, inactivity, games, and automation.\n\n"
-        f"<b>3-Level Referral Rewards</b>\n• Level 1: {l1}\n• Level 2: {l2}\n• Level 3: {l3}\n\n"
-        f"<b>Games:</b> {'Enabled' if games_cfg.get('hub_enabled') else 'Disabled'} | Mine win ratio {games_cfg.get('mines_win_ratio')}%\n"
-        f"<b>Daily bonus rule:</b> {daily_req} referral(s) needed\n"
-        f"<b>Gift code rule:</b> {code_req} referral(s) needed\n"
-        f"<b>Inactivity:</b> {act_cfg.get('deduction_percent')}% after {act_cfg.get('inactivity_days')} day(s)",
+        f"{pe('gear')} <b>Bot Settings</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"🟢 = Enabled | 🔴 = Disabled\n"
+        f"Tap to change any setting.",
         reply_markup=markup
     )
 
@@ -759,75 +764,6 @@ def tog_maintenance(call):
     cur = get_setting("bot_maintenance")
     set_setting("bot_maintenance", not cur)
     safe_answer(call, f"Maintenance {'ON' if not cur else 'OFF'}!")
-    show_settings(call.message.chat.id)
-
-
-@bot.callback_query_handler(func=lambda call: call.data == "s_daily_range")
-def s_daily_range(call):
-    settings_ask(call, "admin_set_daily_bonus_minmax", f"{pe('pencil')} Enter daily bonus range: <code>MIN-MAX</code>")
-
-@bot.callback_query_handler(func=lambda call: call.data == "s_daily_req")
-def s_daily_req(call):
-    settings_ask(call, "admin_set_daily_ref_req", f"{pe('pencil')} Enter minimum direct referrals needed for daily bonus:")
-
-@bot.callback_query_handler(func=lambda call: call.data == "s_code_req")
-def s_code_req(call):
-    settings_ask(call, "admin_set_code_ref_req", f"{pe('pencil')} Enter minimum direct referrals needed for gift code claim:")
-
-@bot.callback_query_handler(func=lambda call: call.data == "s_bonus_tax")
-def s_bonus_tax(call):
-    settings_ask(call, "admin_set_bonus_tax", f"{pe('pencil')} Enter bonus-balance withdrawal tax percentage:")
-
-@bot.callback_query_handler(func=lambda call: call.data == "s_upi_gst")
-def s_upi_gst(call):
-    settings_ask(call, "admin_set_upi_gst", f"{pe('pencil')} Enter UPI withdrawal GST percentage:")
-
-@bot.callback_query_handler(func=lambda call: call.data == "s_inactivity_days")
-def s_inactivity_days(call):
-    settings_ask(call, "admin_set_inactivity_days", f"{pe('pencil')} Enter inactivity period in days:")
-
-@bot.callback_query_handler(func=lambda call: call.data == "s_inactivity_pct")
-def s_inactivity_pct(call):
-    settings_ask(call, "admin_set_inactivity_pct", f"{pe('pencil')} Enter inactivity deduction percentage:")
-
-@bot.callback_query_handler(func=lambda call: call.data == "s_ref_levels")
-def s_ref_levels(call):
-    settings_ask(call, "admin_set_referral_level", f"{pe('pencil')} Format: <code>LEVEL MODE VALUE</code>\nExample: <code>1 fixed 2</code> or <code>2 percent 15</code>")
-
-@bot.callback_query_handler(func=lambda call: call.data == "tog_ip_verify")
-def tog_ip_verify(call):
-    set_setting("ip_verification_enabled", not bool(get_setting("ip_verification_enabled")))
-    safe_answer(call, "IP verification setting updated")
-    show_settings(call.message.chat.id)
-
-@bot.callback_query_handler(func=lambda call: call.data == "tog_games")
-def tog_games(call):
-    cfg = get_games_config(); cfg["hub_enabled"] = not bool(cfg.get("hub_enabled")); set_setting("games_config", cfg)
-    safe_answer(call, "Games setting updated")
-    show_settings(call.message.chat.id)
-
-@bot.callback_query_handler(func=lambda call: call.data == "tog_bonus_tax")
-def tog_bonus_tax(call):
-    set_setting("withdraw_bonus_tax_enabled", not bool(get_setting("withdraw_bonus_tax_enabled")))
-    safe_answer(call, "Bonus tax rule updated")
-    show_settings(call.message.chat.id)
-
-@bot.callback_query_handler(func=lambda call: call.data == "tog_upi_gst")
-def tog_upi_gst(call):
-    set_setting("upi_withdraw_gst_enabled", not bool(get_setting("upi_withdraw_gst_enabled")))
-    safe_answer(call, "UPI GST setting updated")
-    show_settings(call.message.chat.id)
-
-@bot.callback_query_handler(func=lambda call: call.data == "tog_multi_ref")
-def tog_multi_ref(call):
-    cfg = get_advanced_referral_settings(); cfg["enabled"] = not bool(cfg.get("enabled")); set_setting("advanced_referral", cfg)
-    safe_answer(call, "Multi-level referral setting updated")
-    show_settings(call.message.chat.id)
-
-@bot.callback_query_handler(func=lambda call: call.data == "tog_inactivity")
-def tog_inactivity(call):
-    cfg = get_activity_deduction_settings(); cfg["enabled"] = not bool(cfg.get("enabled")); set_setting("activity_deduction", cfg)
-    safe_answer(call, "Inactivity deduction setting updated")
     show_settings(call.message.chat.id)
 
 @bot.callback_query_handler(func=lambda call: call.data == "s_reset_all")
@@ -1176,17 +1112,208 @@ def rm_delete_prompt(call):
 
 
 
-@bot.callback_query_handler(func=lambda call: call.data == "open_advanced_settings")
-def open_advanced_settings(call):
-    safe_answer(call)
-    show_advanced_settings(call.message.chat.id)
+# ======================== ADVANCED CONTROL ========================
+def show_game_control_panel(chat_id):
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        types.InlineKeyboardButton(f"{'🟢' if get_setting('games_enabled') else '🔴'} Games Master", callback_data="adv_tog_games"),
+        types.InlineKeyboardButton(f"{'🟢' if get_setting('mine_game_enabled') else '🔴'} Mine Game", callback_data="adv_tog_mine"),
+    )
+    markup.add(
+        types.InlineKeyboardButton(f"Style: {get_setting('game_style')}", callback_data="adv_game_style"),
+        types.InlineKeyboardButton("⚙️ Mine Config", callback_data="adv_mine_config"),
+    )
+    markup.add(
+        types.InlineKeyboardButton(f"{'🟢' if get_setting('mine_game_visible') else '🔴'} Visible", callback_data="adv_tog_mine_visible"),
+        types.InlineKeyboardButton("📊 Game Report", callback_data="adv_game_report"),
+    )
+    safe_send(
+        chat_id,
+        f"{pe('game')} <b>Game Control Panel</b>\n\n"
+        f"Admin can fully control game status, style, visibility, winning logic, rewards, limits, cooldowns and reporting from here.",
+        reply_markup=markup
+    )
 
-@bot.callback_query_handler(func=lambda call: call.data in ["s_ref_level_1", "s_ref_level_2", "s_ref_level_3"])
-def s_ref_level_direct(call):
-    level = call.data[-1]
-    settings_ask(call, f"admin_set_referral_level_{level}", f"{pe('pencil')} Set reward for Level {level}.\n\nSend in easy format:\n<code>fixed 2</code> → fixed ₹2\n<code>percent 10</code> → 10% of base referral reward")
+@bot.callback_query_handler(func=lambda call: call.data == "adv_game_style")
+def adv_game_style(call):
+    settings_ask(call, "admin_set_game_style", f"{pe('pencil')} Enter game style: <code>web</code> or <code>normal</code>")
 
-@bot.callback_query_handler(func=lambda call: call.data == "s_ref_levels_help")
-def s_ref_levels_help(call):
+@bot.callback_query_handler(func=lambda call: call.data == "adv_mine_config")
+def adv_mine_config(call):
+    settings_ask(call, "admin_set_mine_config", f"{pe('pencil')} Format: <code>MIN_BET MAX_BET WIN_RATIO REWARD_MULTIPLIER</code>\nExample: <code>1 100 0.55 1.8</code>")
+
+@bot.callback_query_handler(func=lambda call: call.data == "adv_tog_games")
+def adv_tog_games(call):
+    cur = get_setting("games_enabled")
+    set_setting("games_enabled", not cur)
+    safe_answer(call, f"Games {'enabled' if not cur else 'disabled'}")
+    show_game_control_panel(call.message.chat.id)
+
+@bot.callback_query_handler(func=lambda call: call.data == "adv_tog_mine")
+def adv_tog_mine(call):
+    cur = get_setting("mine_game_enabled")
+    set_setting("mine_game_enabled", not cur)
+    safe_answer(call, f"Mine game {'enabled' if not cur else 'disabled'}")
+    show_game_control_panel(call.message.chat.id)
+
+@bot.callback_query_handler(func=lambda call: call.data == "adv_tog_mine_visible")
+def adv_tog_mine_visible(call):
+    cur = get_setting("mine_game_visible")
+    set_setting("mine_game_visible", not cur)
+    safe_answer(call, f"Visibility {'enabled' if not cur else 'disabled'}")
+    show_game_control_panel(call.message.chat.id)
+
+@bot.callback_query_handler(func=lambda call: call.data == "adv_game_report")
+def adv_game_report(call):
     safe_answer(call)
-    safe_send(call.message.chat.id, f"{pe('info')} <b>3-Level Referral Reward Help</b>\n\n• <b>Level 1</b> = direct referral reward\n• <b>Level 2</b> = reward when your referral refers someone\n• <b>Level 3</b> = reward on the third level\n\n<b>Easy examples</b>\n• <code>fixed 2</code> = give ₹2\n• <code>percent 15</code> = give 15% of base referral reward")
+    row = db_execute("SELECT COUNT(*) as cnt, SUM(bet_amount) as bets, SUM(reward_amount) as rewards FROM game_sessions", fetchone=True)
+    safe_send(
+        call.message.chat.id,
+        f"{pe('chart')} <b>Game Report</b>\n\n"
+        f"Total Plays: {row['cnt'] or 0}\n"
+        f"Total Bets: ₹{float(row['bets'] or 0):.2f}\n"
+        f"Total Rewards: ₹{float(row['rewards'] or 0):.2f}"
+    )
+
+@bot.callback_query_handler(func=lambda call: call.data == "s_adv_referral")
+def s_adv_referral(call):
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        types.InlineKeyboardButton(f"{'🟢' if get_setting('referral_system_enabled') else '🔴'} Referral System", callback_data="adv_tog_refsys"),
+        types.InlineKeyboardButton("🎯 Set 3 Levels", callback_data="adv_set_ref_levels"),
+    )
+    markup.add(
+        types.InlineKeyboardButton(f"{'🟢' if get_setting('referral_leaderboard_enabled') else '🔴'} Leaderboard", callback_data="adv_tog_ref_lb"),
+        types.InlineKeyboardButton("📌 Bonus Conditions", callback_data="adv_bonus_gate"),
+    )
+    safe_send(
+        call.message.chat.id,
+        f"{pe('people')} <b>Referral Controls</b>\n\n"
+        f"Level 1/2/3 values are designed to be easy for admin to edit.",
+        reply_markup=markup
+    )
+    safe_answer(call)
+
+@bot.callback_query_handler(func=lambda call: call.data == "adv_tog_refsys")
+def adv_tog_refsys(call):
+    cur = get_setting("referral_system_enabled")
+    set_setting("referral_system_enabled", not cur)
+    safe_answer(call, f"Referral system {'enabled' if not cur else 'disabled'}")
+    s_adv_referral(call)
+
+@bot.callback_query_handler(func=lambda call: call.data == "adv_tog_ref_lb")
+def adv_tog_ref_lb(call):
+    cur = get_setting("referral_leaderboard_enabled")
+    set_setting("referral_leaderboard_enabled", not cur)
+    safe_answer(call, f"Leaderboard {'enabled' if not cur else 'disabled'}")
+    s_adv_referral(call)
+
+@bot.callback_query_handler(func=lambda call: call.data == "adv_set_ref_levels")
+def adv_set_ref_levels(call):
+    settings_ask(call, "admin_set_ref_levels", f"{pe('pencil')} Enter 3 level fixed rewards in easy format:\n<code>L1 L2 L3</code>\nExample: <code>5 2 1</code>")
+
+@bot.callback_query_handler(func=lambda call: call.data == "adv_bonus_gate")
+def adv_bonus_gate(call):
+    settings_ask(call, "admin_set_bonus_gate", f"{pe('pencil')} Enter referral requirement for daily bonus and gift/code:\n<code>DAILY CODE</code>\nExample: <code>1 2</code>")
+
+@bot.callback_query_handler(func=lambda call: call.data == "s_adv_deduction")
+def s_adv_deduction(call):
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        types.InlineKeyboardButton(f"{'🟢' if get_setting('activity_deduction_enabled') else '🔴'} Inactivity Deduction", callback_data="adv_tog_deduction"),
+        types.InlineKeyboardButton("⚙️ Set % and Days", callback_data="adv_set_deduction"),
+    )
+    safe_send(
+        call.message.chat.id,
+        f"{pe('down')} <b>Activity Deduction Controls</b>\n\n"
+        f"Admin can define inactivity logic, period, and deduction percentage.",
+        reply_markup=markup
+    )
+    safe_answer(call)
+
+@bot.callback_query_handler(func=lambda call: call.data == "adv_tog_deduction")
+def adv_tog_deduction(call):
+    cur = get_setting("activity_deduction_enabled")
+    set_setting("activity_deduction_enabled", not cur)
+    safe_answer(call, f"Activity deduction {'enabled' if not cur else 'disabled'}")
+    s_adv_deduction(call)
+
+@bot.callback_query_handler(func=lambda call: call.data == "adv_set_deduction")
+def adv_set_deduction(call):
+    settings_ask(call, "admin_set_activity_rule", f"{pe('pencil')} Enter deduction percentage and inactivity days:\n<code>PERCENT DAYS</code>\nExample: <code>10 1</code>")
+
+@bot.callback_query_handler(func=lambda call: call.data == "s_adv_tax")
+def s_adv_tax(call):
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        types.InlineKeyboardButton(f"{'🟢' if get_setting('withdraw_bonus_tax_enabled') else '🔴'} Bonus Withdrawal Tax", callback_data="adv_tog_bonus_tax"),
+        types.InlineKeyboardButton("💸 Set Bonus Tax %", callback_data="adv_set_bonus_tax"),
+    )
+    markup.add(
+        types.InlineKeyboardButton(f"{'🟢' if get_setting('upi_gst_enabled') else '🔴'} UPI GST", callback_data="adv_tog_upi_gst"),
+        types.InlineKeyboardButton("🧾 Set UPI GST", callback_data="adv_set_upi_gst"),
+    )
+    safe_send(call.message.chat.id, f"{pe('money')} <b>Withdrawal Tax & GST Controls</b>", reply_markup=markup)
+    safe_answer(call)
+
+@bot.callback_query_handler(func=lambda call: call.data == "adv_tog_bonus_tax")
+def adv_tog_bonus_tax(call):
+    cur = get_setting("withdraw_bonus_tax_enabled")
+    set_setting("withdraw_bonus_tax_enabled", not cur)
+    safe_answer(call, f"Bonus withdrawal tax {'enabled' if not cur else 'disabled'}")
+    s_adv_tax(call)
+
+@bot.callback_query_handler(func=lambda call: call.data == "adv_set_bonus_tax")
+def adv_set_bonus_tax(call):
+    settings_ask(call, "admin_set_bonus_tax", f"{pe('pencil')} Enter bonus-only withdrawal tax percentage:")
+
+@bot.callback_query_handler(func=lambda call: call.data == "adv_tog_upi_gst")
+def adv_tog_upi_gst(call):
+    cur = get_setting("upi_gst_enabled")
+    set_setting("upi_gst_enabled", not cur)
+    safe_answer(call, f"UPI GST {'enabled' if not cur else 'disabled'}")
+    s_adv_tax(call)
+
+@bot.callback_query_handler(func=lambda call: call.data == "adv_set_upi_gst")
+def adv_set_upi_gst(call):
+    settings_ask(call, "admin_set_upi_gst", f"{pe('pencil')} Enter UPI GST amount:")
+
+@bot.callback_query_handler(func=lambda call: call.data == "s_adv_bonus")
+def s_adv_bonus(call):
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        types.InlineKeyboardButton("🎁 Fixed Daily Bonus", callback_data="s_daily"),
+        types.InlineKeyboardButton("🎲 Random Daily Range", callback_data="adv_daily_random"),
+    )
+    safe_send(
+        call.message.chat.id,
+        f"{pe('party')} <b>Bonus Controls</b>\n\n"
+        f"Admin can switch between fixed daily bonus and configurable random daily bonus range.",
+        reply_markup=markup
+    )
+    safe_answer(call)
+
+@bot.callback_query_handler(func=lambda call: call.data == "adv_daily_random")
+def adv_daily_random(call):
+    cur = get_setting("daily_bonus_random_enabled")
+    set_setting("daily_bonus_random_enabled", not cur)
+    settings_ask(call, "admin_set_daily_bonus_random", f"{pe('pencil')} Random daily bonus is now {'enabled' if not cur else 'disabled'}.\nEnter range as <code>MIN MAX</code>")
+
+@bot.callback_query_handler(func=lambda call: call.data == "s_adv_ip")
+def s_adv_ip(call):
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    markup.add(types.InlineKeyboardButton(f"{'🟢' if get_setting('ip_verification_enabled') else '🔴'} IP Verification", callback_data="adv_tog_ip_verify"))
+    safe_send(
+        call.message.chat.id,
+        f"{pe('shield')} <b>IP Verification Controls</b>\n\n"
+        f"Admin can enable or disable IP verification from here.",
+        reply_markup=markup
+    )
+    safe_answer(call)
+
+@bot.callback_query_handler(func=lambda call: call.data == "adv_tog_ip_verify")
+def adv_tog_ip_verify(call):
+    cur = get_setting("ip_verification_enabled")
+    set_setting("ip_verification_enabled", not cur)
+    safe_answer(call, f"IP verification {'enabled' if not cur else 'disabled'}")
+    s_adv_ip(call)
