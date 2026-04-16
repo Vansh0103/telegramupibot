@@ -879,21 +879,21 @@ def check_force_join(user_id):
 def send_join_message(chat_id):
     join_image = "https://advisory-brown-r63twvnsdu.edgeone.app/c693132c-cd1f-4a81-9b5e-8b8f042e490b.png"
     markup = types.InlineKeyboardMarkup(row_width=2)
-    markup.add(types.InlineKeyboardButton("📩 Join", url=REQUEST_CHANNEL))
+    markup.add(types.InlineKeyboardButton("🔐 Join", url=REQUEST_CHANNEL))
     channel_buttons = [
-        types.InlineKeyboardButton("📢 Join", url="https://t.me/skullmodder"),
-        types.InlineKeyboardButton("📢 Join", url="https://t.me/botsarefather"),
-        types.InlineKeyboardButton("📢 Join", url="https://youtube.com/@newvansh?si=nG1ANvrTYCcuXztq"),
-        types.InlineKeyboardButton("📢 Join", url="https://t.me/upilootpay"),
-    ]
+        types.InlineKeyboardButton("🔒 Join", url="https://t.me/skullmodder"),
+        types.InlineKeyboardButton("🔒 Join", url="https://t.me/botsarefather"),
+        types.InlineKeyboardButton("🔒 Join", url="https://t.me/upilootpay"),
+        types.InlineKeyboardButton("🔒 Join", url="https://youtube.com/@newvansh?si=nG1ANvrTYCcuXztq"),
+        ]
     markup.add(*channel_buttons[:2])
     markup.add(*channel_buttons[2:])
-    markup.add(types.InlineKeyboardButton("✅ I've Joined - Verify", callback_data="verify_join"))
+    markup.add(types.InlineKeyboardButton(" 🔓Joined - Verify", callback_data="verify_join"))
     caption = (
         f"{pe('warning')} <b>Join Required</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
         f"{pe('arrow')} Please join all channels below first.\n"
-        f"{pe('info')} After joining, tap <b>I've Joined - Verify</b>.\n\n"
+        f"{pe('info')} After joining, tap <b>Joined - Verify</b>.\n\n"
         f"{pe('excl')} <b>Note:</b> Force join works only for public channels where the bot is admin.\n"
         f"━━━━━━━━━━━━━━━━━━━━━━"
     )
