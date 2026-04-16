@@ -274,22 +274,26 @@ def gift_handler(message):
     show_gift_menu(message.chat.id, user)
 
 def show_gift_menu(chat_id, user):
+    bonus_title = get_setting("bonus_menu_title") or "Bonus"
+    gift_label = get_setting("gift_label") or "Gift"
+    games_label = get_setting("games_label") or "Games"
     markup = types.InlineKeyboardMarkup(row_width=2)
     markup.add(
-        types.InlineKeyboardButton("🎟 Claim Gift Code", callback_data="redeem_code"),
-        types.InlineKeyboardButton("🎁 Create Gift", callback_data="create_gift"),
+        types.InlineKeyboardButton(f"🎁 {gift_label}", callback_data="bonus_gift_menu"),
+        types.InlineKeyboardButton(f"🎮 {games_label}", callback_data="bonus_games_menu"),
     )
     markup.add(types.InlineKeyboardButton("🎰 Daily Bonus", callback_data="daily_bonus"))
     safe_send(
         chat_id,
-        f"{pe('party')} <b>Gift & Bonus Center</b> {pe('sparkle')}\n"
+        f"{pe('party')} <b>{bonus_title} Center</b> {pe('sparkle')}\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"{pe('fly_money')} <b>Balance:</b> ₹{user['balance']:.2f}\n\n"
-        f"{pe('star')} <b>What can you do here?</b>\n"
-        f"  {pe('arrow')} <b>Redeem Code</b> — Claim a gift code\n"
-        f"  {pe('arrow')} <b>Create Gift</b> — Create code from balance\n"
-        f"  {pe('arrow')} <b>Daily Bonus</b> — Free daily coins!\n\n"
-        f"{pe('bulb')} <i>Share codes with friends!</i>\n"
+        f"{pe('fly_money')} <b>Balance:</b> ₹{user['balance']:.2f}\n"
+        f"{pe('money')} <b>Bonus Balance:</b> ₹{float(user['bonus_balance'] or 0):.2f}\n\n"
+        f"{pe('star')} <b>Sections</b>\n"
+        f"  {pe('arrow')} <b>{gift_label}</b> — redeem and create gift codes\n"
+        f"  {pe('arrow')} <b>{games_label}</b> — play mine and future games\n"
+        f"  {pe('arrow')} <b>Daily Bonus</b> — claim your daily reward\n\n"
+        f"{pe('bulb')} <i>Everything in this area is controlled from admin settings.</i>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━",
         reply_markup=markup
     )
@@ -332,25 +336,59 @@ def create_gift_cb(call):
 @bot.callback_query_handler(func=lambda call: call.data == "bonus_gift_menu")
 def bonus_gift_menu(call):
     safe_answer(call)
+    gift_label = get_setting("gift_label") or "Gift"
     markup = types.InlineKeyboardMarkup(row_width=2)
     markup.add(
         types.InlineKeyboardButton("🎟 Claim Gift Code", callback_data="redeem_code"),
         types.InlineKeyboardButton("🎁 Create Gift", callback_data="create_gift"),
     )
-    PLACEHOLDER
+    markup.add(types.InlineKeyboardButton("🔙 Back to Bonus", callback_data="bonus_home_menu"))
+    safe_send(
+        call.message.chat.id,
+        f"{pe('party')} <b>{gift_label} Section</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"{pe('arrow')} <b>Claim Gift Code</b> — redeem an existing code\n"
+        f"{pe('arrow')} <b>Create Gift</b> — create a code from your balance\n"
+        f"{pe('bulb')} Share codes with friends or use codes given by admin.\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━",
+        reply_markup=markup
+    )
+
+@bot.callback_query_handler(func=lambda call: call.data == "bonus_home_menu")
+def bonus_home_menu(call):
+    safe_answer(call)
+    user = get_user(call.from_user.id)
+    if not user:
+        safe_send(call.message.chat.id, "Please send /start first.")
+        return
+    show_gift_menu(call.message.chat.id, user)
 
 @bot.callback_query_handler(func=lambda call: call.data == "bonus_games_menu")
 def bonus_games_menu(call):
     safe_answer(call)
     cfg = get_games_config()
+    games_label = get_setting("games_label") or "Games"
+    gift_label = get_setting("gift_label") or "Gift"
     markup = types.InlineKeyboardMarkup(row_width=1)
     web_url = get_bonus_menu_webapp_url(call.from_user.id, 'games')
     if cfg.get('mines_enabled') and web_url:
         markup.add(types.InlineKeyboardButton("💣 Play Mine Game", web_app=WebAppInfo(url=web_url)))
     elif cfg.get('mines_enabled'):
         markup.add(types.InlineKeyboardButton("💣 Mine Game Enabled (set PUBLIC_BASE_URL)", callback_data="noop"))
+    else:
+        markup.add(types.InlineKeyboardButton("💣 Mine Game Currently Disabled", callback_data="noop"))
     markup.add(types.InlineKeyboardButton("📜 My Game History", callback_data="game_history"))
-    safe_send(call.message.chat.id, f"{pe('game')} <b>Games</b>\nMine game is available now. More games can be added later from templates.", reply_markup=markup)
+    markup.add(types.InlineKeyboardButton(f"🔙 Back to {gift_label} / {games_label}", callback_data="bonus_home_menu"))
+    safe_send(
+        call.message.chat.id,
+        f"{pe('game')} <b>{games_label} Section</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"💣 <b>Mine Game</b> — available here\n"
+        f"🕒 <b>Coming Soon</b> — more games can be added later\n"
+        f"📜 <b>History</b> — check your recent game results\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━",
+        reply_markup=markup
+    )
 
 @bot.callback_query_handler(func=lambda call: call.data == "game_history")
 def game_history(call):
