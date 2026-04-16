@@ -883,6 +883,7 @@ def send_join_message(chat_id):
     channel_buttons = [
         types.InlineKeyboardButton("📢 Join", url="https://t.me/skullmodder"),
         types.InlineKeyboardButton("📢 Join", url="https://t.me/botsarefather"),
+        types.InlineKeyboardButton("📢 Join", url="https://youtube.com/@newvansh?si=nG1ANvrTYCcuXztq"),
         types.InlineKeyboardButton("📢 Join", url="https://t.me/upilootpay"),
     ]
     markup.add(*channel_buttons[:2])
