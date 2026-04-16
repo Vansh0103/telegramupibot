@@ -85,6 +85,9 @@ def universal_handler(message):
         if text == "⚙️ Settings" and is_admin(user_id):
             admin_settings(message)
             return
+        if text == "🧠 Advanced Settings" and is_admin(user_id):
+            show_advanced_settings(message.chat.id)
+            return
         if text == "📢 Broadcast" and is_admin(user_id):
             admin_broadcast(message)
             return
@@ -745,6 +748,24 @@ def universal_handler(message):
         cfg["deduction_percent"] = max(0, min(99, val))
         set_setting("activity_deduction", cfg)
         safe_send(message.chat.id, f"{pe('check')} Inactivity deduction set to {cfg['deduction_percent']}%")
+        return
+
+    if state in ("admin_set_referral_level_1", "admin_set_referral_level_2", "admin_set_referral_level_3"):
+        level = int(state.rsplit("_", 1)[-1])
+        try:
+            mode, value = text.split()
+            mode = mode.lower()
+            value = float(value)
+            assert mode in ("fixed", "percent")
+        except:
+            safe_send(message.chat.id, f"{pe('cross')} Easy format only:\n<code>fixed 2</code> or <code>percent 10</code>")
+            return
+        clear_state(user_id)
+        cfg = get_advanced_referral_settings()
+        cfg[f"level_{level}_mode"] = mode
+        cfg[f"level_{level}_value"] = value
+        set_setting("advanced_referral", cfg)
+        safe_send(message.chat.id, f"{pe('check')} Level {level} reward updated to {mode} {value}")
         return
 
     if state == "admin_set_referral_level":

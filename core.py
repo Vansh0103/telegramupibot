@@ -476,6 +476,12 @@ def db_lastrowid(query, params=()):
         finally:
             conn.close()
 
+
+
+def get_settings():
+    """Compatibility helper returning all settings as a dict."""
+    return {k: get_setting(k) for k in DEFAULT_SETTINGS.keys()}
+
 def get_setting(key):
     row = db_execute("SELECT value FROM settings WHERE key=?", (key,), fetchone=True)
     if row:
@@ -751,6 +757,31 @@ def can_user_play_game(user_id, game_key="mines"):
             except Exception:
                 pass
     return True, "OK"
+
+def play_mine_game(user_id, bet_amount, pick_index=0):
+    """Compatibility helper for mine game play used by older web entry points."""
+    allowed, reason = can_user_play_game(user_id, "mines")
+    if not allowed:
+        return {"ok": False, "error": reason}
+    user = get_user(user_id)
+    if not user:
+        return {"ok": False, "error": "User not found."}
+    cfg = get_games_config()
+    bet = round(float(bet_amount or 0), 2)
+    min_bet = float(cfg.get("mines_min_bet", 1) or 1)
+    max_bet = float(cfg.get("mines_max_bet", 25) or 25)
+    if bet < min_bet or bet > max_bet:
+        return {"ok": False, "error": f"Bet must be between ₹{min_bet:.2f} and ₹{max_bet:.2f}."}
+    if float(user.get("balance") or 0) < bet:
+        return {"ok": False, "error": "Insufficient balance."}
+    win_ratio = int(cfg.get("mines_win_ratio", 45) or 45)
+    reward_multiplier = float(cfg.get("mines_reward_multiplier", 1.8) or 1.8)
+    win = random.randint(1, 100) <= max(0, min(100, win_ratio))
+    reward = round(bet * reward_multiplier, 2) if win else 0
+    net = round(reward if win else -bet, 2)
+    update_user(user_id, balance=round(float(user.get("balance") or 0) - bet + reward, 2), total_earned=round(float(user.get("total_earned") or 0) + reward, 2), last_activity_at=now_str())
+    record_game_result(user_id, "mines", bet, reward, net, "win" if win else "loss", {"pick": int(pick_index or 0), "legacy_helper": True})
+    return {"ok": True, "result": "win" if win else "loss", "reward": reward, "net_change": net}
 
 def record_game_result(user_id, game_key, bet_amount, reward_amount, net_change, result, metadata=None):
     db_execute(
@@ -1137,6 +1168,9 @@ def get_admin_keyboard():
     markup.add(
         types.KeyboardButton("💳 Withdrawals"),
         types.KeyboardButton("⚙️ Settings"),
+    )
+    markup.add(
+        types.KeyboardButton("🧠 Advanced Settings"),
     )
     markup.add(
         types.KeyboardButton("📢 Broadcast"),

@@ -264,10 +264,10 @@ def show_refer(chat_id, user_id, user):
         bot_username = "bot"
     refer_link = f"https://t.me/{bot_username}?start={user_id}"
     share_msg = f"💰 Join from my link and earn rewards: {refer_link}"
-    top_rows = db_execute("SELECT first_name, referral_count, referral_earnings FROM users ORDER BY referral_count DESC, referral_earnings DESC LIMIT 5", fetch=True) or []
+    top_rows = db_execute("SELECT user_id, first_name, referral_count FROM users WHERE referral_count > 0 ORDER BY referral_count DESC, id ASC LIMIT 10", fetch=True) or []
     board = []
     for idx, row in enumerate(top_rows, start=1):
-        board.append(f"{idx}. {row['first_name'] or 'User'} — {row['referral_count']} refs | ₹{float(row['referral_earnings'] or 0):.2f}")
+        board.append(f"{idx}. {row['first_name'] or 'User'} — {int(row['referral_count'] or 0)} total referrals")
     levels_text = []
     for level in range(1, int(cfg.get('levels', 3) or 3) + 1):
         mode = cfg.get(f"level_{level}_mode", "fixed")
@@ -276,7 +276,7 @@ def show_refer(chat_id, user_id, user):
         levels_text.append(f"Level {level}: {display}")
     markup = types.InlineKeyboardMarkup(row_width=1)
     markup.add(types.InlineKeyboardButton("📤 Share My Referral Link", switch_inline_query=share_msg))
-    markup.add(types.InlineKeyboardButton("🔄 Refresh Leaderboard", callback_data="open_refer"))
+    markup.add(types.InlineKeyboardButton("🏆 Referral Board", callback_data="refer_board"))
     rules = "\n".join(f"• {x}" for x in levels_text)
     leaderboard = "\n".join(board) if board else "No data yet"
     text = (
@@ -287,8 +287,22 @@ def show_refer(chat_id, user_id, user):
         f"{pe('thumbs_up')} <b>Direct Referrals:</b> {int(user['referral_count'] or 0)}\n"
         f"{pe('chart_up')} <b>Level stats:</b> L1 {int(user['level1_referrals'] or 0)} | L2 {int(user['level2_referrals'] or 0)} | L3 {int(user['level3_referrals'] or 0)}\n\n"
         f"{pe('star')} <b>Reward Rules:</b>\n{rules}\n\n"
-        f"{pe('trophy')} <b>Leaderboard</b>\n{leaderboard}"
+        f"{pe('trophy')} <b>Referral Board Preview</b>\n{leaderboard}\n\nTap <b>Referral Board</b> to view the top referrers list."
     )
     safe_send(chat_id, text, reply_markup=markup)
 
 
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "refer_board")
+def refer_board_cb(call):
+    safe_answer(call)
+    rows = db_execute("SELECT first_name, referral_count FROM users WHERE referral_count > 0 ORDER BY referral_count DESC, id ASC LIMIT 20", fetch=True) or []
+    lines = []
+    for idx, row in enumerate(rows, start=1):
+        lines.append(f"{idx}. {row['first_name'] or 'User'} — {int(row['referral_count'] or 0)} total referrals")
+    if not lines:
+        lines = ["No referrals yet."]
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("🔄 Refresh Board", callback_data="refer_board"))
+    safe_send(call.message.chat.id, f"{pe('trophy')} <b>Top Referrers</b>\n\n" + "\n".join(lines), reply_markup=markup)
