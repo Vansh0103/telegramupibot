@@ -18,7 +18,7 @@ from withdrawlimit import WithdrawLimitSystem
 from adminhelp import AdminHelpSystem
 # ======================== CONFIGURATION ========================
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
-ADMIN_ID = 8624480309
+ADMIN_ID = 7353041224
 HELP_USERNAME = "@itsukiarai"
 MESSAGE_EFFECT_ID = "5104841245755180586"
 FORCE_JOIN_CHANNELS = ["@skullmodder","@botsarefather","@upilootpay"]
