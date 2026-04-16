@@ -261,8 +261,26 @@ def cancel_withdraw(call):
         pass
 
 # ======================== GIFT ========================
-@bot.message_handler(func=lambda m: m.text in ["🎁 Gift", "🎁 Bonus", str(get_setting("bonus_button_label") or "🎁 Gift")])
+@bot.message_handler(func=lambda m: m.text == "🎟 Gift")
 def gift_handler(message):
+    user_id = message.from_user.id
+    if not check_force_join(user_id):
+        send_join_message(message.chat.id)
+        return
+    user = get_user(user_id)
+    if not user:
+        safe_send(message.chat.id, "Please send /start first.")
+        return
+    set_state(user_id, "enter_gift_code")
+    safe_send(
+        message.chat.id,
+        f"{pe('pencil')} <b>Enter Gift Code</b>\n\n"
+        f"{pe('info')} Type your gift code below:\n"
+        f"{pe('arrow')} Example: <code>GIFT1234</code>"
+    )
+
+@bot.message_handler(func=lambda m: m.text in ["🎁 Bonus", str(get_setting("bonus_button_label") or "🎁 Bonus")])
+def bonus_handler(message):
     user_id = message.from_user.id
     if not check_force_join(user_id):
         send_join_message(message.chat.id)
@@ -274,20 +292,16 @@ def gift_handler(message):
     show_gift_menu(message.chat.id, user)
 
 def show_gift_menu(chat_id, user):
-    bonus_title = str(get_setting("bonus_menu_title") or "Gift & Bonus Center")
+    bonus_title = str(get_setting("bonus_menu_title") or "Bonus Center")
     games_enabled = bool(get_setting("games_enabled")) and bool(get_setting("games_menu_enabled"))
     mine_enabled = bool(get_setting("mine_game_enabled"))
 
     markup = types.InlineKeyboardMarkup(row_width=2)
-    markup.add(
-        types.InlineKeyboardButton("🎟 Claim Gift Code", callback_data="redeem_code"),
-        types.InlineKeyboardButton("🎁 Create Gift", callback_data="create_gift"),
-    )
-    markup.add(types.InlineKeyboardButton("🎰 Daily Bonus", callback_data="daily_bonus"))
+    markup.add(types.InlineKeyboardButton("🎁 Gift Options", callback_data="gift_options_menu"))
     if games_enabled:
         markup.add(types.InlineKeyboardButton("🎮 Games", callback_data="games_menu"))
 
-    extra_lines = ""
+    extra_lines = f"  {pe('arrow')} <b>Gift Options</b> — Claim code, create gift, daily bonus\n"
     if games_enabled:
         extra_lines += f"  {pe('arrow')} <b>Games</b> — Play bonus games and check results\n"
         if mine_enabled:
@@ -299,15 +313,31 @@ def show_gift_menu(chat_id, user):
         f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
         f"{pe('fly_money')} <b>Balance:</b> ₹{user['balance']:.2f}\n\n"
         f"{pe('star')} <b>What can you do here?</b>\n"
-        f"  {pe('arrow')} <b>Redeem Code</b> — Claim a gift code\n"
-        f"  {pe('arrow')} <b>Create Gift</b> — Create code from balance\n"
-        f"  {pe('arrow')} <b>Daily Bonus</b> — Free daily coins!\n"
         f"{extra_lines}\n"
-        f"{pe('bulb')} <i>Share codes with friends!</i>\n"
+        f"{pe('bulb')} <i>Choose Gift or Games below.</i>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━",
         reply_markup=markup
     )
 
+@bot.callback_query_handler(func=lambda call: call.data == "gift_options_menu")
+def gift_options_menu_cb(call):
+    safe_answer(call)
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        types.InlineKeyboardButton("🎟 Claim Gift Code", callback_data="redeem_code"),
+        types.InlineKeyboardButton("🎁 Create Gift", callback_data="create_gift"),
+    )
+    markup.add(types.InlineKeyboardButton("🎰 Daily Bonus", callback_data="daily_bonus"))
+    markup.add(types.InlineKeyboardButton("🔙 Back to Bonus", callback_data="back_bonus_center"))
+    safe_send(
+        call.message.chat.id,
+        f"{pe('gift')} <b>Gift Options</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"{pe('arrow')} Redeem gift code\n"
+        f"{pe('arrow')} Create your own gift\n"
+        f"{pe('arrow')} Claim daily bonus",
+        reply_markup=markup
+    )
 
 @bot.callback_query_handler(func=lambda call: call.data == "refer_leaderboard")
 def refer_leaderboard_cb(call):

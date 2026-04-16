@@ -43,7 +43,7 @@ DEFAULT_SETTINGS = {
     "refer_enabled": True,
     "gift_enabled": True,
     "bonus_menu_title": "Bonus Center",
-    "bonus_button_label": "🎁 Gift",
+    "bonus_button_label": "🎁 Bonus",
     "bot_maintenance": False,
     "welcome_image": WELCOME_IMAGE,
     "withdraw_image": WITHDRAWAL_IMAGE,
@@ -1163,16 +1163,17 @@ def clear_state(user_id):
 # ======================== KEYBOARDS ========================
 def get_main_keyboard(user_id=None):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    gift_label = str(get_setting("bonus_button_label") or "🎁 Gift")
+    bonus_label = str(get_setting("bonus_button_label") or "🎁 Bonus")
     markup.add(
         types.KeyboardButton("💰 Balance"),
         types.KeyboardButton("👥 Refer"),
     )
     markup.add(
         types.KeyboardButton("🏧 Withdraw"),
-        types.KeyboardButton(gift_label),
+        types.KeyboardButton("🎟 Gift"),
     )
     markup.add(
+        types.KeyboardButton(bonus_label),
         types.KeyboardButton("📋 Tasks"),
     )
     if user_id and is_admin(user_id):

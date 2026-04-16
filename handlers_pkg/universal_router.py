@@ -1,6 +1,6 @@
 from core import *
 from .basic_user import send_db, start_handler, balance_handler, refer_handler
-from .user_withdraw_gift import withdraw_handler, gift_handler
+from .user_withdraw_gift import withdraw_handler, gift_handler, bonus_handler
 from .user_tasks import tasks_handler
 from .admin_main import (
     admin_cmd, admin_dashboard, admin_all_users, admin_withdrawals, admin_settings,
@@ -64,8 +64,11 @@ def universal_handler(message):
         if text == "🏧 Withdraw":
             withdraw_handler(message)
             return
-        if text in ["🎁 Gift", "🎁 Bonus", str(get_setting("bonus_button_label") or "🎁 Gift")]:
+        if text == "🎟 Gift":
             gift_handler(message)
+            return
+        if text in ["🎁 Bonus", str(get_setting("bonus_button_label") or "🎁 Bonus")]:
+            bonus_handler(message)
             return
         if text == "📋 Tasks":
             tasks_handler(message)

@@ -4,6 +4,7 @@ import sqlite3
 import hashlib
 import re
 from flask import Flask, request, jsonify, render_template
+from core import get_setting, db_execute, play_mine_game
 import json
 import random
 from datetime import datetime, timedelta
@@ -261,6 +262,17 @@ def verify_user(user_id: int, ip: str, user_agent: str):
     }
 
 
+
+def get_user_row(user_id: int):
+    return db_execute("SELECT * FROM users WHERE user_id=?", (int(user_id),), fetchone=True)
+
+def get_game_history(user_id: int, limit: int = 20):
+    return db_execute(
+        "SELECT game_key as game_type, bet_amount as amount, reward_amount as reward, result, created_at FROM game_sessions WHERE user_id=? ORDER BY id DESC LIMIT ?",
+        (int(user_id), int(limit)),
+        fetch=True
+    ) or []
+
 def _games_payload(user_id: int):
     user = get_user_row(user_id)
     if not user:
@@ -297,16 +309,19 @@ def games_home():
     if wants_json:
         return jsonify(payload)
 
-    return render_template(
-        "mine_game.html",
-        user_id=user_id,
-        mine_game_name=payload["mine_game_name"],
-        balance=payload["balance"],
-        min_bet=payload["min_bet"],
-        max_bet=payload["max_bet"],
-        reward_multiplier=payload["reward_multiplier"],
-        cooldown_seconds=payload["cooldown_seconds"],
-    )
+    try:
+        return render_template(
+            "mine_game.html",
+            user_id=user_id,
+            mine_game_name=payload["mine_game_name"],
+            balance=payload["balance"],
+            min_bet=payload["min_bet"],
+            max_bet=payload["max_bet"],
+            reward_multiplier=payload["reward_multiplier"],
+            cooldown_seconds=payload["cooldown_seconds"],
+        )
+    except Exception as e:
+        return jsonify({"error": f"Game page render failed: {str(e)}"}), 500
 
 @app.route("/games/play", methods=["POST"])
 def games_play():
